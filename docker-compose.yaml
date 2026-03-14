@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   server:
     build:
@@ -9,9 +7,10 @@ services:
       - "3001:3001"
     volumes:
       - ./server:/app
-      - /app/node_modules
+      - cargo-registry:/usr/local/cargo/registry
+      - ./server/target:/app/target
     environment:
-      - NODE_ENV=development
+      - RUST_LOG=info
 
   client:
     build:
@@ -24,3 +23,6 @@ services:
       - /app/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true
+
+volumes:
+  cargo-registry:
