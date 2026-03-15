@@ -10,7 +10,7 @@ Most of the game takes place on the 2D map. There is also a page for unit descri
 
 ## Architecture
 
-This game is built on a client-server architecture. The game state is maintained on the server and the client is updated in real-time. The server is a Node.js application built from a Leaflet map with Turf.js for geometry calculations. The client is a web application built from a React.js application with a Node.js backend. The game itself is an entity component system where units are airframes, boats, etc, and entity has components that define its properties, capabilities, and behaviors.
+This game is built on a client-server architecture. The game state is maintained on the server and the client is updated in real-time. The server is a Rust application built from a map with Turf.js for geometry calculations. The client is a web application built from a React.js application with a Node.js backend. The game itself is an entity component system where units are airframes, boats, etc, and entity has components that define its properties, capabilities, and behaviors.
 
 ## Deployment
 
