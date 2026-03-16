@@ -1,0 +1,22 @@
+server {
+    listen 80;
+    #server_name localhost your_machine_ip_address; # Add your machine's IP here or 'example.com' if using a domain
+    # We now use a variable placeholder for the dynamic hostname
+    server_name localhost ${HOST_HOSTNAME};
+
+    location / {
+        proxy_pass http://client:5173;
+        #proxy_set_header Host $host;   # this line will cause a Vite 403
+        proxy_set_header Host client;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /api/ {
+        proxy_pass http://server:3001/;
+        #proxy_set_header Host $host;   # this line will cause a Vite 403
+        proxy_set_header Host server;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
