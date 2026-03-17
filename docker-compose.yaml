@@ -15,6 +15,23 @@ services:
     networks:
       - tess_net
 
+  server-tests:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    volumes:
+      - ./server:/app
+      - cargo-registry:/usr/local/cargo/registry
+      - ./server/target:/app/target
+    environment:
+      - RUST_LOG=info
+    networks:
+      - tess_net
+    # Continuously watch and run tests, focusing on the ecs module.
+    # Adjust the 'test ecs' filter as needed for your test names.
+    command: >
+      cargo watch -x "test ecs"
+
   client:
     build:
       context: ./client
