@@ -23,3 +23,18 @@
   command: >
     cargo watch -x "test world_template"
   ```
+
+### How to run the server
+
+- **Using Docker Compose**  
+  The project is designed to run via Docker Compose with separate containers for the server and client. From the repo root:
+
+  ```bash
+  docker compose up
+  ```
+
+  This will:
+  - Build and start the Rust server container.
+  - Build and start the client container.
+
+  You can then access the game via the HTTP endpoint exposed by the `nginx` service (see the root `README.md` and `docker-compose.yaml` for details).
