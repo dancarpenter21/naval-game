@@ -5,8 +5,11 @@ import MapView from './components/MapView';
 import SyncMatrixView from './components/SyncMatrixView';
 import SessionModal from './components/SessionModal';
 import './App.css';
+import { SOCKET_PATH, SOCKET_URL } from './config';
 
-const socket = io('http://localhost:3001');
+const socket = SOCKET_URL
+  ? io(SOCKET_URL, { path: SOCKET_PATH })
+  : io({ path: SOCKET_PATH });
 
 function App() {
   const [session, setSession] = useState(null);
