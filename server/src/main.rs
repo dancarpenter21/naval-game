@@ -12,6 +12,9 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 
+mod ecs;
+use ecs::WorldTemplate;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionPublic {
     id: String,
@@ -43,6 +46,10 @@ struct StopSessionData {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     info!("Starting server...");
+
+    // Load entity/component templates from YAML/JSON files for the game engine.
+    let world_template = WorldTemplate::load_from_dir("config/entities")?;
+    info!("Loaded {} entity template(s)", world_template.entities.len());
 
     let sessions_store: Arc<Mutex<HashMap<String, GameSession>>> =
         Arc::new(Mutex::new(HashMap::new()));

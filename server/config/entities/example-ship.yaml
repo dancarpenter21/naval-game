@@ -1,0 +1,13 @@
+---
+- id: frigate
+  name: Guided Missile Frigate
+  components:
+    - kind: transform
+      data:
+        x: 0.0
+        y: 0.0
+        heading_deg: 90.0
+    - kind: movement
+      data:
+        max_speed_knots: 30.0
+        acceleration: 2.0
