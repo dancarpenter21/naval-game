@@ -18,6 +18,102 @@ body, html {
   flex-direction: column;
 }
 
+.app-topbar {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 2000;
+}
+
+.hamburger-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 20, 24, 0.75);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+.hamburger-button:hover {
+  background: rgba(20, 20, 24, 0.9);
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 0;
+  padding: 0;
+  margin: 0;
+  z-index: 1999;
+}
+
+.hamburger-menu {
+  position: fixed;
+  top: 60px;
+  left: 12px;
+  width: min(320px, calc(100vw - 24px));
+  background: rgba(20, 20, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  color: #fff;
+  padding: 10px;
+  z-index: 2001;
+  backdrop-filter: blur(12px);
+}
+
+.menu-header {
+  padding: 6px 8px 10px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  margin-bottom: 8px;
+}
+
+.menu-title {
+  font-weight: 600;
+}
+
+.menu-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.menu-item.danger {
+  border-color: rgba(255, 80, 80, 0.35);
+  background: rgba(255, 80, 80, 0.12);
+}
+
+.menu-item.danger:hover {
+  background: rgba(255, 80, 80, 0.18);
+}
+
 /* Ensure Leaflet controls don't overlap strangely with our UI if we add more */
 .leaflet-container {
   font-family: 'Inter', sans-serif;

@@ -10,6 +10,7 @@
 
 .tabs-header {
   display: flex;
+  justify-content: flex-end;
   background-color: #1e1e1e;
   border-bottom: 1px solid #333;
 }
