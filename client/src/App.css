@@ -21,7 +21,7 @@ body, html {
 .app-topbar {
   position: fixed;
   top: 12px;
-  left: 12px;
+  right: 12px;
   z-index: 2000;
 }
 
@@ -55,7 +55,7 @@ body, html {
 .hamburger-menu {
   position: fixed;
   top: 60px;
-  left: 12px;
+  right: 12px;
   width: min(320px, calc(100vw - 24px));
   background: rgba(20, 20, 24, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.12);

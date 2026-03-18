@@ -4,39 +4,46 @@ import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useState } from 'react';
 
-const createMilSymbolIcon = ({ sidc, headingDeg, name }) => {
+const normalizeSidc = (sidc) => sidc?.replace(/-/g, '');
+
+const createMilSymbolIcon = ({ sidc, name }) => {
   try {
-    const symbol = new ms.Symbol(sidc, {
-      size: 48,
-      direction: headingDeg,
-      uniqueDesignation: name,
+    const normalizedSidc = normalizeSidc(sidc);
+    const symbol = new ms.Symbol(normalizedSidc, {
+      size: 25,
+      standard: '2525D',
     });
     const svg = symbol.asSVG();
-    console.log('[milsymbol] built', { sidc, svgLength: svg?.length, size: symbol.getSize() });
+    console.log('[milsymbol] built', {
+      sidc,
+      normalizedSidc,
+      svgLength: svg?.length,
+      size: symbol.getSize(),
+    });
 
     return L.divIcon({
       className: 'custom-milsymbol',
       html: `
         <div style="
-          width: 64px;
-          height: 64px;
+          width: 25px;
+          height: 25px;
           display: flex;
           align-items: center;
           justify-content: center;
           overflow: visible;
-          background: rgba(15, 76, 129, 0.12);
-          border: 1px solid rgba(255, 255, 255, 0.45);
-          border-radius: 8px;
-          box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
-        ">
+        " title="${name}">
           ${svg}
         </div>
       `,
-      iconSize: [64, 64],
-      iconAnchor: [32, 32],
+      iconSize: [25, 25],
+      iconAnchor: [12, 12],
     });
   } catch (error) {
-    console.warn('[milsymbol] failed to build icon, using fallback', { sidc, error });
+    console.warn('[milsymbol] failed to build icon, using fallback', {
+      sidc,
+      normalizedSidc: normalizeSidc(sidc),
+      error,
+    });
     return L.divIcon({
       className: 'custom-milsymbol fallback',
       html: `
@@ -55,6 +62,15 @@ const createMilSymbolIcon = ({ sidc, headingDeg, name }) => {
   }
 };
 
+const normalizeShipsSnapshot = (snapshot) => {
+  if (Array.isArray(snapshot)) return snapshot;
+  if (Array.isArray(snapshot?.ships)) return snapshot.ships;
+  if (Array.isArray(snapshot?.data)) return snapshot.data;
+  if (snapshot && typeof snapshot === 'object' && snapshot.id && snapshot.sidc) {
+    return [snapshot];
+  }
+  return [];
+};
 
 const MapView = ({ socket, session }) => {
   const [ships, setShips] = useState([]);
@@ -64,7 +80,7 @@ const MapView = ({ socket, session }) => {
 
     const handleWorldSnapshot = (snapshot) => {
       console.log('[world_snapshot] received', snapshot);
-      if (Array.isArray(snapshot)) setShips(snapshot);
+      setShips(normalizeShipsSnapshot(snapshot));
     };
 
     socket.on('world_snapshot', handleWorldSnapshot);
@@ -111,7 +127,6 @@ const MapView = ({ socket, session }) => {
         {ships.map((ship) => {
           const icon = createMilSymbolIcon({
             sidc: ship.sidc,
-            headingDeg: ship.heading_deg,
             name: ship.name,
           });
 
