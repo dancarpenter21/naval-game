@@ -8,7 +8,7 @@
   From the repo root, run:
 
   ```bash
-  docker compose run --rm server-tests
+  docker compose --profile tests run --rm --init server-tests
   ```
 
   This starts a one-off container that:

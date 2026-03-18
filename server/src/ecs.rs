@@ -138,17 +138,17 @@ mod tests {
             .find(|e| e.id == "frigate")
             .expect("expected an entity with id 'frigate'");
 
-        // We expect two components: transform and movement.
+        // We expect three components: transform, movement, symbol.
         assert_eq!(
             frigate.components.len(),
-            2,
-            "frigate should have exactly two components"
+            3,
+            "frigate should have exactly three components"
         );
 
         let mut kinds: Vec<&str> = frigate.components.iter().map(|c| c.kind.as_str()).collect();
         kinds.sort_unstable();
 
-        assert_eq!(kinds, vec!["movement", "transform"]);
+        assert_eq!(kinds, vec!["movement", "symbol", "transform"]);
 
         // Ensure that component data objects were deserialized and are not empty.
         for component in &frigate.components {
@@ -158,6 +158,34 @@ mod tests {
                 component.kind
             );
         }
+
+        // Spot-check some transform fields expected by the map UI.
+        let transform = frigate
+            .components
+            .iter()
+            .find(|c| c.kind == "transform")
+            .expect("frigate should have a transform component");
+
+        for key in ["lat_deg", "lon_deg", "hae_m", "heading_deg"] {
+            assert!(
+                transform.data.get(key).is_some(),
+                "transform.data missing key '{key}': {:?}",
+                transform.data
+            );
+        }
+
+        // Spot-check the symbol SIDC used by the client.
+        let symbol = frigate
+            .components
+            .iter()
+            .find(|c| c.kind == "symbol")
+            .expect("frigate should have a symbol component");
+
+        assert!(
+            symbol.data.get("sidc").is_some(),
+            "symbol.data missing key 'sidc': {:?}",
+            symbol.data
+        );
     }
 }
 

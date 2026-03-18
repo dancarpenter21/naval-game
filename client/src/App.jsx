@@ -79,7 +79,7 @@ function App() {
       </div>
       <Tabs>
         <Tab label="Map">
-          <MapView />
+          <MapView socket={socket} session={session} />
         </Tab>
         <Tab label="Sync Matrix">
           <SyncMatrixView />
