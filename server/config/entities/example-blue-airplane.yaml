@@ -1,0 +1,22 @@
+- id: blue-airplane
+  name: Blue Example Airplane
+  allegiance: friendly
+  components:
+    - kind: transform
+      data:
+        # Example spawn location/altitude for the blue unit.
+        lat_deg: 36.0
+        lon_deg: -41.0
+        hae_m: 0.0
+        # 0° = north, 90° = east (matches server movement convention)
+        heading_deg: 0.0
+    - kind: movement
+      data:
+        # Fixed-wing example speed.
+        max_speed_knots: 480.0
+        acceleration: 2.0
+    - kind: symbol
+      data:
+        # Friendly fixed-wing aircraft (MIL-STD-2525D compatible example).
+        # Note: client normalizes SIDC by removing '-' characters at render time.
+        sidc: "10-0-3-01-0-0-00-110103-00-00"

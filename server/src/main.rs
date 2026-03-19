@@ -3,9 +3,10 @@ use socketioxide::{
     extract::{Data, SocketRef},
     SocketIo,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tower_http::cors::CorsLayer;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::fs;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::env;
@@ -14,7 +15,12 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 
 mod ecs;
-use ecs::WorldTemplate;
+mod dto;
+use ecs::{Allegiance, EntityConfig, WorldTemplate};
+use dto::{
+    CreateSessionData, JoinSessionData, ShipSnapshot, SnapshotRequestData, SessionPublic,
+    SessionsListDto, StopSessionData, WorldSnapshotDto,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 struct TransformWorld {
@@ -36,30 +42,14 @@ struct SymbolConfig {
     sidc: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ShipSnapshot {
-    id: String,
-    name: String,
-    lat_deg: f64,
-    lon_deg: f64,
-    hae_m: f64,
-    heading_deg: f64,
-    sidc: String,
-}
-
 #[derive(Debug, Clone)]
 struct ShipState {
     id: String,
     name: String,
+    allegiance: Allegiance,
     transform: TransformWorld,
     movement: MovementConfig,
     symbol: SymbolConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionPublic {
-    id: String,
-    name: String,
 }
 
 fn on_session_closed_stub(_public: &SessionPublic) {
@@ -74,24 +64,42 @@ struct GameSession {
     world: Arc<Mutex<Vec<ShipState>>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateSessionData {
-    name: String,
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ScenarioConfig {
+    #[serde(default)]
+    spawns: Vec<ScenarioSpawn>,
 }
 
-#[derive(Debug, Deserialize)]
-struct JoinSessionData {
-    id: String,
+fn default_spawn_count() -> u32 {
+    1
 }
 
-#[derive(Debug, Deserialize)]
-struct StopSessionData {
-    id: String,
+#[derive(Debug, Clone, Deserialize)]
+struct ScenarioSpawn {
+    #[serde(rename = "entity_id", alias = "id")]
+    entity_id: String,
+    #[serde(default = "default_spawn_count")]
+    count: u32,
 }
 
-#[derive(Debug, Deserialize)]
-struct SnapshotRequestData {
-    id: String,
+fn load_scenario_config(path: &str) -> Result<ScenarioConfig, Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(path)?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(ScenarioConfig::default());
+    }
+
+    // If the scenario file is malformed/partial for now, default to spawning all entities.
+    match serde_yaml::from_str::<ScenarioConfig>(&content) {
+        Ok(cfg) => Ok(cfg),
+        Err(e) => {
+            warn!(
+                "Failed to parse scenario config at {} ({}). Defaulting to spawn-all.",
+                path, e
+            );
+            Ok(ScenarioConfig::default())
+        }
+    }
 }
 
 #[tokio::main]
@@ -142,6 +150,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    let scenario_config = Arc::new(load_scenario_config("config/scenarios/example-scenario.yaml")?);
+
     let sessions_store: Arc<Mutex<HashMap<String, GameSession>>> =
         Arc::new(Mutex::new(HashMap::new()));
     
@@ -152,8 +162,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let io_for_ns = io.clone();
         let io_for_handlers = io.clone();
         let world_template = world_template.clone();
+        let scenario_config = scenario_config.clone();
         io_for_ns.ns("/", move |socket: SocketRef| {
-            on_connect(socket, store, io_for_handlers.clone(), world_template.clone())
+            on_connect(
+                socket,
+                store,
+                io_for_handlers.clone(),
+                world_template.clone(),
+                scenario_config.clone(),
+            )
         });
     }
 
@@ -232,6 +249,7 @@ fn spawn_game_loop(
                             .map(|s| ShipSnapshot {
                                 id: s.id.clone(),
                                 name: s.name.clone(),
+                                allegiance: s.allegiance.clone(),
                                 lat_deg: s.transform.lat_deg,
                                 lon_deg: s.transform.lon_deg,
                                 hae_m: s.transform.hae_m,
@@ -249,7 +267,7 @@ fn spawn_game_loop(
                         snapshot.len()
                     );
                     io.to(session_id.clone())
-                        .emit("world_snapshot", snapshot)
+                        .emit("world_snapshot", WorldSnapshotDto { ships: snapshot })
                         .ok();
 
                     if tick_count % 20 == 0 {
@@ -275,6 +293,7 @@ fn on_connect(
     store: Arc<Mutex<HashMap<String, GameSession>>>,
     io: SocketIo,
     world_template: Arc<WorldTemplate>,
+    scenario_config: Arc<ScenarioConfig>,
 ) {
     info!(
         "A user connected socket_id={} session_name={} session_id={} tick_count={}",
@@ -295,51 +314,114 @@ fn on_connect(
                 name: data.name,
             };
 
-            // Spawn a single ship from the example template (frigate) into this session's world.
-            let ship_template = world_template
-                .entities
-                .iter()
-                .find(|e| e.id == "frigate")
-                .cloned()
-                .expect("expected an entity template with id 'frigate'");
+            // Scenario-based spawning.
+            // If the scenario config has no explicit spawns yet, we default to spawning all loaded entities.
+            let mut ships: Vec<ShipState> = Vec::new();
 
-            let mut transform: Option<TransformWorld> = None;
-            let mut movement: Option<MovementConfig> = None;
-            let mut symbol: Option<SymbolConfig> = None;
+            let spawns = &scenario_config.spawns;
+            if spawns.is_empty() {
+                for entity_template in &world_template.entities {
+                    let instance_id = entity_template.id.clone();
 
-            for component in ship_template.components.iter() {
-                match component.kind.as_str() {
-                    "transform" => {
-                        transform = Some(
-                            serde_yaml::from_value(component.data.clone())
-                                .expect("failed to parse transform component"),
+                    let mut transform: Option<TransformWorld> = None;
+                    let mut movement: Option<MovementConfig> = None;
+                    let mut symbol: Option<SymbolConfig> = None;
+
+                    for component in entity_template.components.iter() {
+                        match component.kind.as_str() {
+                            "transform" => {
+                                transform = Some(
+                                    serde_yaml::from_value(component.data.clone())
+                                        .expect("failed to parse transform component"),
+                                );
+                            }
+                            "movement" => {
+                                movement = Some(
+                                    serde_yaml::from_value(component.data.clone())
+                                        .expect("failed to parse movement component"),
+                                );
+                            }
+                            "symbol" => {
+                                symbol = Some(
+                                    serde_yaml::from_value(component.data.clone())
+                                        .expect("failed to parse symbol component"),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    ships.push(ShipState {
+                        id: instance_id,
+                        name: entity_template.name.clone(),
+                        allegiance: entity_template.allegiance.clone(),
+                        transform: transform
+                            .expect("entity missing transform component"),
+                        movement: movement.expect("entity missing movement component"),
+                        symbol: symbol.expect("entity missing symbol component"),
+                    });
+                }
+            } else {
+                for spawn in spawns {
+                    if let Some(entity_template) = world_template
+                        .entities
+                        .iter()
+                        .find(|e| e.id == spawn.entity_id)
+                    {
+                        for i in 0..spawn.count {
+                            let instance_id = if spawn.count <= 1 {
+                                entity_template.id.clone()
+                            } else {
+                                format!("{}-{}", entity_template.id, i + 1)
+                            };
+
+                            let mut transform: Option<TransformWorld> = None;
+                            let mut movement: Option<MovementConfig> = None;
+                            let mut symbol: Option<SymbolConfig> = None;
+
+                            for component in entity_template.components.iter() {
+                                match component.kind.as_str() {
+                                    "transform" => {
+                                        transform = Some(
+                                            serde_yaml::from_value(component.data.clone())
+                                                .expect("failed to parse transform component"),
+                                        );
+                                    }
+                                    "movement" => {
+                                        movement = Some(
+                                            serde_yaml::from_value(component.data.clone())
+                                                .expect("failed to parse movement component"),
+                                        );
+                                    }
+                                    "symbol" => {
+                                        symbol = Some(
+                                            serde_yaml::from_value(component.data.clone())
+                                                .expect("failed to parse symbol component"),
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            ships.push(ShipState {
+                                id: instance_id,
+                                name: entity_template.name.clone(),
+                                allegiance: entity_template.allegiance.clone(),
+                                transform: transform.expect("entity missing transform component"),
+                                movement: movement.expect("entity missing movement component"),
+                                symbol: symbol.expect("entity missing symbol component"),
+                            });
+                        }
+                    } else {
+                        warn!(
+                            "Scenario spawn referenced unknown entity_id={}",
+                            spawn.entity_id
                         );
                     }
-                    "movement" => {
-                        movement = Some(
-                            serde_yaml::from_value(component.data.clone())
-                                .expect("failed to parse movement component"),
-                        );
-                    }
-                    "symbol" => {
-                        symbol = Some(
-                            serde_yaml::from_value(component.data.clone())
-                                .expect("failed to parse symbol component"),
-                        );
-                    }
-                    _ => {}
                 }
             }
 
-            let ship = ShipState {
-                id: ship_template.id.clone(),
-                name: ship_template.name.clone(),
-                transform: transform.expect("frigate missing transform component"),
-                movement: movement.expect("frigate missing movement component"),
-                symbol: symbol.expect("frigate missing symbol component"),
-            };
-
-            let world = Arc::new(Mutex::new(vec![ship]));
+            let world = Arc::new(Mutex::new(ships));
             {
                 let guard = world.lock().await;
                 info!(
@@ -383,7 +465,7 @@ fn on_connect(
         socket.on("get_sessions", |socket: SocketRef| async move {
             let store_lock = store.lock().await;
             let sessions: Vec<SessionPublic> = store_lock.values().map(|s| s.public.clone()).collect();
-            socket.emit("sessions_list", sessions).ok();
+            socket.emit("sessions_list", SessionsListDto { sessions }).ok();
         });
     }
 
@@ -410,6 +492,7 @@ fn on_connect(
                         .map(|s| ShipSnapshot {
                             id: s.id.clone(),
                             name: s.name.clone(),
+                            allegiance: s.allegiance.clone(),
                             lat_deg: s.transform.lat_deg,
                             lon_deg: s.transform.lon_deg,
                             hae_m: s.transform.hae_m,
@@ -418,7 +501,7 @@ fn on_connect(
                         })
                         .collect::<Vec<_>>()
                 };
-                socket.emit("world_snapshot", snapshot).ok();
+                socket.emit("world_snapshot", WorldSnapshotDto { ships: snapshot }).ok();
             }
         });
     }
@@ -437,6 +520,7 @@ fn on_connect(
                             .map(|s| ShipSnapshot {
                                 id: s.id.clone(),
                                 name: s.name.clone(),
+                                allegiance: s.allegiance.clone(),
                                 lat_deg: s.transform.lat_deg,
                                 lon_deg: s.transform.lon_deg,
                                 hae_m: s.transform.hae_m,
@@ -452,7 +536,7 @@ fn on_connect(
                         -1,
                         snapshot.len()
                     );
-                    socket.emit("world_snapshot", snapshot).ok();
+                    socket.emit("world_snapshot", WorldSnapshotDto { ships: snapshot }).ok();
                 }
             },
         );

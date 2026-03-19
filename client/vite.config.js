@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+/* global process */
+
 // https://vite.dev/config/
 const origin = process.env.VITE_APP_ORIGIN || 'http://localhost:8080';
 const hmrHost = process.env.VITE_HMR_HOST || 'localhost';

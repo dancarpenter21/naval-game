@@ -1,29 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import './SessionModal.css';
+import { z } from 'zod';
 
-const normalizeSessionsList = (payload) => {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.sessions)) return payload.sessions;
-  if (Array.isArray(payload?.data)) return payload.data;
-  if (payload && typeof payload === 'object') {
-    // If we received a single session object like: { id, name }
-    if (typeof payload?.id === 'string' && typeof payload?.name === 'string') {
-      return [payload];
-    }
+const SessionDtoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
 
-    // If we received an object whose values are sessions (numeric keys etc.)
-    const values = Object.values(payload);
-    if (
-      values.length > 0
-      && values.every(
-        (v) => v && typeof v === 'object' && typeof v.id === 'string' && typeof v.name === 'string',
-      )
-    ) {
-      return values;
-    }
-  }
-  return [];
-};
+// Enforce that the payload is an object with a `sessions` array.
+// We'll validate each element separately so malformed sessions don't break rendering.
+const SessionsListDtoShapeSchema = z.object({
+  sessions: z.array(z.unknown()),
+});
 
 const SessionModal = ({ socket, onSessionEstablished }) => {
   const [view, setView] = useState('initial'); // 'initial', 'new_session', 'join_session'
@@ -34,7 +22,58 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
     if (view === 'join_session' && socket) {
       const handleSessionsList = (sessionList) => {
         console.log('[sessions_list] raw payload', sessionList);
-        setSessions(normalizeSessionsList(sessionList));
+        let candidate = null;
+
+        if (Array.isArray(sessionList)) {
+          candidate = { sessions: sessionList };
+        } else if (sessionList && typeof sessionList === 'object') {
+          if (Array.isArray(sessionList.sessions)) {
+            candidate = sessionList;
+          } else if (Array.isArray(sessionList.data)) {
+            candidate = { sessions: sessionList.data };
+          }
+        }
+
+        if (!candidate) {
+          console.error('[sessions_list] invalid DTO shape', {
+            receivedType: sessionList === null ? 'null' : typeof sessionList,
+          });
+          setSessions([]);
+          return;
+        }
+
+        const topLevel = SessionsListDtoShapeSchema.safeParse(candidate);
+        if (!topLevel.success) {
+          console.error('[sessions_list] invalid DTO shape', {
+            issues: topLevel.error.issues.slice(0, 5),
+          });
+          setSessions([]);
+          return;
+        }
+
+        const sessionsUnknown = topLevel.data.sessions;
+        const validSessions = [];
+        let invalidCount = 0;
+
+        for (const sessionUnknown of sessionsUnknown) {
+          const parsedSession = SessionDtoSchema.safeParse(sessionUnknown);
+          if (!parsedSession.success) {
+            invalidCount += 1;
+            continue;
+          }
+          validSessions.push(parsedSession.data);
+        }
+
+        if (invalidCount > 0) {
+          console.error('[sessions_list] invalid session DTOs detected', {
+            invalidCount,
+            sampleInvalid: sessionsUnknown
+              .filter((s) => !SessionDtoSchema.safeParse(s).success)
+              .slice(0, 3),
+          });
+        }
+
+        setSessions(validSessions);
       };
 
       socket.on('sessions_list', handleSessionsList);

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 use std::error::Error;
 use std::fs;
@@ -16,8 +16,25 @@ pub struct ComponentConfig {
 pub struct EntityConfig {
     pub id: String,
     pub name: String,
+    pub allegiance: Allegiance,
     #[serde(default)]
     pub components: Vec<ComponentConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Allegiance {
+    Hostile,
+    Friendly,
+}
+
+impl Allegiance {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Allegiance::Hostile => "hostile",
+            Allegiance::Friendly => "friendly",
+        }
+    }
 }
 
 /// Static template set describing the entities/components available to a game.
@@ -40,32 +57,43 @@ impl WorldTemplate {
             return Ok(WorldTemplate { entities });
         }
 
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if !is_entity_file(&path) {
-                continue;
-            }
-
-            let content = fs::read_to_string(&path)?;
-            match try_parse_entities(&content) {
-                Ok(mut file_entities) => {
-                    info!(
-                        "Loaded {} entity definition(s) from {:?}",
-                        file_entities.len(),
-                        path
-                    );
-                    entities.append(&mut file_entities);
-                }
-                Err(e) => {
-                    warn!("Failed to parse entity file {:?}: {}", path, e);
-                }
-            }
-        }
+        load_from_dir_recursive(dir, &mut entities)?;
 
         Ok(WorldTemplate { entities })
     }
+}
+
+fn load_from_dir_recursive(dir: &Path, entities: &mut Vec<EntityConfig>) -> Result<(), Box<dyn Error>> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            load_from_dir_recursive(&path, entities)?;
+            continue;
+        }
+
+        if !is_entity_file(&path) {
+            continue;
+        }
+
+        let content = fs::read_to_string(&path)?;
+        match try_parse_entities(&content) {
+            Ok(mut file_entities) => {
+                info!(
+                    "Loaded {} entity definition(s) from {:?}",
+                    file_entities.len(),
+                    path
+                );
+                entities.append(&mut file_entities);
+            }
+            Err(e) => {
+                warn!("Failed to parse entity file {:?}: {}", path, e);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn is_entity_file(path: &PathBuf) -> bool {
@@ -131,12 +159,18 @@ mod tests {
         let template = WorldTemplate::load_from_dir(&dir)
             .unwrap_or_else(|e| panic!("failed to load entities from {:?}: {e}", dir));
 
-        // Find the frigate defined in `example-ship.yaml`.
+        // Find the frigate defined in `example-red-ship.yaml`.
         let frigate = template
             .entities
             .iter()
             .find(|e| e.id == "frigate")
             .expect("expected an entity with id 'frigate'");
+
+        assert!(
+            matches!(frigate.allegiance, Allegiance::Hostile),
+            "expected frigate allegiance to be 'hostile', got {:?}",
+            frigate.allegiance
+        );
 
         // We expect three components: transform, movement, symbol.
         assert_eq!(

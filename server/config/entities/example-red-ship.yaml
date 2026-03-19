@@ -1,6 +1,7 @@
 ---
 - id: frigate
   name: Guided Missile Frigate
+  allegiance: hostile
   components:
     - kind: transform
       data:
