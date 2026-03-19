@@ -11,6 +11,7 @@ services:
       - ./server/target:/app/target
     environment:
       - PORT=3001
+      # Debug per-tick logs require enabling DEBUG in RUST_LOG (currently set to `info`).
       - RUST_LOG=info
     networks:
       - tess_net
@@ -27,6 +28,8 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - ./server/target:/app/target
     environment:
+      # Debug per-tick logs require enabling DEBUG in RUST_LOG (currently set to `info`).
+      # RUST_LOG=naval_game_server=debug,info (or just RUST_LOG=debug if you’re ok with broader debug).
       - RUST_LOG=info
     networks:
       - tess_net

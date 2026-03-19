@@ -1,6 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import './SessionModal.css';
 
+const normalizeSessionsList = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.sessions)) return payload.sessions;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (payload && typeof payload === 'object') {
+    // If we received a single session object like: { id, name }
+    if (typeof payload?.id === 'string' && typeof payload?.name === 'string') {
+      return [payload];
+    }
+
+    // If we received an object whose values are sessions (numeric keys etc.)
+    const values = Object.values(payload);
+    if (
+      values.length > 0
+      && values.every(
+        (v) => v && typeof v === 'object' && typeof v.id === 'string' && typeof v.name === 'string',
+      )
+    ) {
+      return values;
+    }
+  }
+  return [];
+};
+
 const SessionModal = ({ socket, onSessionEstablished }) => {
   const [view, setView] = useState('initial'); // 'initial', 'new_session', 'join_session'
   const [sessions, setSessions] = useState([]);
@@ -8,13 +32,15 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
 
   useEffect(() => {
     if (view === 'join_session' && socket) {
-      socket.emit('get_sessions');
-      
       const handleSessionsList = (sessionList) => {
-        setSessions(sessionList);
+        console.log('[sessions_list] raw payload', sessionList);
+        setSessions(normalizeSessionsList(sessionList));
       };
 
       socket.on('sessions_list', handleSessionsList);
+
+      // Register listener before requesting, to avoid missing fast responses.
+      socket.emit('get_sessions');
 
       return () => {
         socket.off('sessions_list', handleSessionsList);
@@ -99,14 +125,25 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
               <p style={{ color: '#aaa', margin: '30px 0' }}>No active sessions found.</p>
             ) : (
               <ul className="session-list">
-                {sessions.map(s => (
-                  <li key={s.id} className="session-item">
-                    <span className="session-info">{s.name} ({s.id})</span>
-                    <button className="btn-join" onClick={() => handleJoinSession(s.id)}>
+                {sessions.map((s, idx) => {
+                  const sessionId = s?.id ?? null;
+                  const key = sessionId ?? `${s?.name ?? 'session'}-${idx}`;
+
+                  return (
+                    <li key={key} className="session-item">
+                      <span className="session-info">
+                        {s?.name ?? 'Unnamed'} ({sessionId ?? 'unknown'})
+                      </span>
+                      <button
+                        className="btn-join"
+                        disabled={!sessionId}
+                        onClick={() => sessionId && handleJoinSession(sessionId)}
+                      >
                       Join
-                    </button>
-                  </li>
-                ))}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <button className="btn btn-back" onClick={() => setView('initial')}>

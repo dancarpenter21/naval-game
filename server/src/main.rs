@@ -3,11 +3,12 @@ use socketioxide::{
     extract::{Data, SocketRef},
     SocketIo,
 };
-use tracing::info;
+use tracing::{debug, info};
 use tower_http::cors::CorsLayer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::env;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
@@ -61,6 +62,11 @@ struct SessionPublic {
     name: String,
 }
 
+fn on_session_closed_stub(_public: &SessionPublic) {
+    // Stub hook for game logging/recording when the session closes.
+    // Intentionally left empty for now.
+}
+
 struct GameSession {
     public: SessionPublic,
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -90,14 +96,50 @@ struct SnapshotRequestData {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
-    info!("Starting server...");
+    // Keep log level controlled by docker compose / environment.
+    // (EnvFilter isn't available in this build, so we approximate by scanning RUST_LOG.)
+    let rust_log = env::var("RUST_LOG").unwrap_or_default().to_lowercase();
+    let max_level = if rust_log.contains("trace") {
+        tracing::Level::TRACE
+    } else if rust_log.contains("debug") {
+        tracing::Level::DEBUG
+    } else if rust_log.contains("info") {
+        tracing::Level::INFO
+    } else if rust_log.contains("warn") {
+        tracing::Level::WARN
+    } else if rust_log.contains("error") {
+        tracing::Level::ERROR
+    } else {
+        tracing::Level::INFO
+    };
+
+    tracing_subscriber::fmt().with_max_level(max_level).init();
+    info!(
+        "Starting server session_name={} session_id={} tick_count={}",
+        "n/a",
+        "n/a",
+        -1
+    );
 
     // Load entity/component templates from YAML/JSON files for the game engine.
     let world_template = Arc::new(WorldTemplate::load_from_dir("config/entities")?);
-    info!("Loaded {} entity template(s)", world_template.entities.len());
+    info!(
+        "Loaded {} entity template(s) session_name={} session_id={} tick_count={}",
+        world_template.entities.len(),
+        "n/a",
+        "n/a",
+        -1
+    );
     for e in &world_template.entities {
-        info!("Template loaded: id='{}' name='{}' components={}", e.id, e.name, e.components.len());
+        info!(
+            "Template loaded: id='{}' name='{}' components={} session_name={} session_id={} tick_count={}",
+            e.id,
+            e.name,
+            e.components.len(),
+            "n/a",
+            "n/a",
+            -1
+        );
     }
 
     let sessions_store: Arc<Mutex<HashMap<String, GameSession>>> =
@@ -124,7 +166,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = std::env::var("PORT").unwrap_or_else(|_| "3001".to_string());
     let addr = format!("0.0.0.0:{}", port);
     
-    info!("Server listening on port {}", addr);
+    info!(
+        "Server listening on port {} session_name={} session_id={} tick_count={}",
+        addr,
+        "n/a",
+        "n/a",
+        -1
+    );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     
     axum::serve(listener, app).await?;
@@ -147,7 +195,12 @@ fn spawn_game_loop(
         loop {
             tokio::select! {
                 _ = &mut stop_rx => {
-                    info!("Game loop stopped for session {}", session_id);
+                    info!(
+                        "Game loop stopped session_name={} session_id={} tick_count={}",
+                        session_name,
+                        session_id,
+                        -1
+                    );
                     break;
                 }
                 _ = ticker.tick() => {
@@ -188,9 +241,11 @@ fn spawn_game_loop(
                             .collect::<Vec<_>>()
                     };
 
-                    info!(
-                        "Emitting world_snapshot: session={} ships={}",
+                    debug!(
+                        "Game tick: session_name={} session_id={} tick_count={} emitting world_snapshot ships={}",
+                        session_name,
                         session_id,
+                        tick_count,
                         snapshot.len()
                     );
                     io.to(session_id.clone())
@@ -200,8 +255,11 @@ fn spawn_game_loop(
                     if tick_count % 20 == 0 {
                         let count = world.lock().await.len();
                         info!(
-                            "Game tick: session={} name={} ships={}",
-                            session_id, session_name, count
+                            "Game tick: session_name={} session_id={} tick_count={} ships={}",
+                            session_name,
+                            session_id,
+                            tick_count,
+                            count
                         );
                     }
                 }
@@ -218,7 +276,13 @@ fn on_connect(
     io: SocketIo,
     world_template: Arc<WorldTemplate>,
 ) {
-    info!("A user connected: {}", socket.id);
+    info!(
+        "A user connected socket_id={} session_name={} session_id={} tick_count={}",
+        socket.id,
+        "n/a",
+        "n/a",
+        -1
+    );
 
     {
         let store = store.clone();
@@ -279,8 +343,10 @@ fn on_connect(
             {
                 let guard = world.lock().await;
                 info!(
-                    "Session {}: spawned {} ship(s): [{}]",
+                    "Session spawned session_name={} session_id={} tick_count={} spawned_count={} ship_ids=[{}]",
+                    public.name,
                     public.id,
+                    -1,
                     guard.len(),
                     guard.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", ")
                 );
@@ -301,7 +367,12 @@ fn on_connect(
             };
             
             store.lock().await.insert(id.clone(), game_session);
-            info!("Session created: {:?}", public);
+            info!(
+                "Session created session_name={} session_id={} tick_count={}",
+                public.name,
+                public.id,
+                -1
+            );
             socket.join(id.clone());
             socket.emit("session_created", public).ok();
         });
@@ -323,7 +394,13 @@ fn on_connect(
             if let Some(session) = store_lock.get(&data.id) {
                 socket.join(data.id.clone());
                 socket.emit("session_joined", session.public.clone()).ok();
-                info!("User {} joined session {}", socket.id, data.id);
+                info!(
+                    "User joined session user_socket_id={} session_name={} session_id={} tick_count={}",
+                    socket.id,
+                    session.public.name,
+                    data.id,
+                    -1
+                );
 
                 // Send an immediate snapshot to the joiner.
                 let snapshot = {
@@ -369,8 +446,10 @@ fn on_connect(
                             .collect::<Vec<_>>()
                     };
                     info!(
-                        "Sending requested world_snapshot: session={} ships={}",
+                        "Sending requested world_snapshot session_name={} session_id={} tick_count={} ships={}",
+                        session.public.name,
                         data.id,
+                        -1,
                         snapshot.len()
                     );
                     socket.emit("world_snapshot", snapshot).ok();
@@ -382,17 +461,38 @@ fn on_connect(
     {
         let store = store.clone();
         socket.on("stop_session", |socket: SocketRef, Data::<StopSessionData>(data)| async move {
+            let session_id = data.id.clone();
             let mut store_lock = store.lock().await;
-            if let Some(mut session) = store_lock.remove(&data.id) {
+            if let Some(mut session) = store_lock.remove(&session_id) {
                 if let Some(stop_tx) = session.stop_tx.take() {
                     let _ = stop_tx.send(());
                 }
-                info!("Session stopped: {}", data.id);
+                let public = session.public.clone();
+                info!(
+                    "Session stopped session_name={} session_id={} tick_count={}",
+                    public.name,
+                    session_id,
+                    -1
+                );
+
+                // Invoke stub hook (left empty for now).
+                on_session_closed_stub(&public);
+
                 // Notify everyone in the session room that this game has stopped.
-                let public = session.public;
-                socket.to(data.id.clone()).emit("session_stopped", public.clone()).ok();
+                socket
+                    .to(session_id.clone())
+                    .emit("session_stopped", public.clone())
+                    .ok();
                 // Also notify the stopper explicitly (they may or may not be in the room).
                 socket.emit("session_stopped", public).ok();
+
+                // Disconnect all sockets connected to this session room.
+                // This ensures the server is not left with lingering connections
+                // once the session loop has been stopped.
+                socket
+                    .within(session_id)
+                    .disconnect()
+                    .ok();
             }
         });
     }
