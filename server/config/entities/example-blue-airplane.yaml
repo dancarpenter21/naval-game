@@ -17,6 +17,14 @@
         acceleration: 2.0
     - kind: symbol
       data:
-        # Friendly fixed-wing aircraft (MIL-STD-2525D compatible example).
-        # Note: client normalizes SIDC by removing '-' characters at render time.
-        sidc: "10-0-3-01-0-0-00-110103-00-00"
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: air
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110103
+          modifier_one: code_00
+          modifier_two: code_00

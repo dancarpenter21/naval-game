@@ -56,7 +56,7 @@ services:
       - VITE_APP_AUTO_OPEN=false
     networks:
       - tess_net
-    
+
   nginx:
     image: nginx:stable-alpine
     ports:

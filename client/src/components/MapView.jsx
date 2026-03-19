@@ -2,8 +2,15 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
+
+/** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
+const MILSYMBOL_STANDARD = 'APP6';
+
+if (typeof ms.setStandard === 'function') {
+  ms.setStandard(MILSYMBOL_STANDARD);
+}
 
 const normalizeSidc = (sidc) => sidc?.replace(/-/g, '');
 
@@ -11,7 +18,7 @@ const createMilSymbolSvg = ({ sidc, size }) => {
   const normalizedSidc = normalizeSidc(sidc);
   const symbol = new ms.Symbol(normalizedSidc, {
     size,
-    standard: '2525D',
+    standard: MILSYMBOL_STANDARD,
   });
   return symbol.asSVG();
 };
@@ -21,7 +28,7 @@ const createMilSymbolIcon = ({ sidc, name }) => {
     const normalizedSidc = normalizeSidc(sidc);
     const symbol = new ms.Symbol(normalizedSidc, {
       size: 25,
-      standard: '2525D',
+      standard: MILSYMBOL_STANDARD,
     });
     const svg = symbol.asSVG();
     console.log('[milsymbol] built', {
@@ -197,6 +204,18 @@ const MapView = ({ socket, session }) => {
   const blueUnitNameFontSize = unitNameFontSize;
   const blueUnitIdFontSize = unitIdFontSize;
   const blueUnitGap = unitGap;
+
+  const markerIconsByEntityKey = useMemo(() => {
+    const next = new Map();
+    for (const entity of entities) {
+      const entityKey = `${entity.id}:${entity.sidc}`;
+      next.set(entityKey, createMilSymbolIcon({
+        sidc: entity.sidc,
+        name: entity.name,
+      }));
+    }
+    return next;
+  }, [entities]);
 
   return (
     <div ref={outerRef} style={{ height: '100%', width: '100%', position: 'relative' }}>
@@ -403,13 +422,10 @@ const MapView = ({ socket, session }) => {
           attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
         />
         {entities.map((ship) => {
-          const icon = createMilSymbolIcon({
-            sidc: ship.sidc,
-            name: ship.name,
-          });
-
+          const entityKey = `${ship.id}:${ship.sidc}`;
+          const icon = markerIconsByEntityKey.get(entityKey);
           return (
-            <Marker key={ship.id} position={[ship.lat_deg, ship.lon_deg]} icon={icon}>
+            <Marker key={entityKey} position={[ship.lat_deg, ship.lon_deg]} icon={icon}>
               <Popup>
                 {ship.name} ({ship.id})
               </Popup>

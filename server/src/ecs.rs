@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
+use crate::sidc::{status_from_sidc, Status};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComponentConfig {
@@ -36,6 +37,7 @@ impl Allegiance {
         }
     }
 }
+
 
 /// Static template set describing the entities/components available to a game.
 #[derive(Debug, Clone)]
@@ -171,6 +173,37 @@ mod tests {
             "expected frigate allegiance to be 'hostile', got {:?}",
             frigate.allegiance
         );
+        let symbol = frigate
+            .components
+            .iter()
+            .find(|c| c.kind == "symbol")
+            .expect("frigate should have a symbol component");
+        let status_from_raw_sidc = symbol
+            .data
+            .get("sidc")
+            .and_then(|v| v.as_str())
+            .and_then(status_from_sidc);
+        let status_from_template = symbol
+            .data
+            .get("sidc_template")
+            .and_then(|v| v.get("status"))
+            .and_then(|v| v.as_str())
+            .and_then(|s| match s {
+                "present_fully_capable" => Some(Status::PresentFullyCapable),
+                "present" => Some(Status::Present),
+                "planned_anticipated_suspect" => Some(Status::PlannedAnticipatedSuspect),
+                "present_damage" => Some(Status::PresentDamage),
+                "present_destroyed" => Some(Status::PresentDestroyed),
+                "present_full_to_capacity" => Some(Status::PresentFullToCapacity),
+                _ => None,
+            });
+        assert!(
+            matches!(
+                status_from_raw_sidc.or(status_from_template),
+                Some(Status::PresentFullyCapable)
+            ),
+            "expected frigate status to decode as PresentFullyCapable from sidc or sidc_template"
+        );
 
         // We expect three components: transform, movement, symbol.
         assert_eq!(
@@ -208,16 +241,10 @@ mod tests {
             );
         }
 
-        // Spot-check the symbol SIDC used by the client.
-        let symbol = frigate
-            .components
-            .iter()
-            .find(|c| c.kind == "symbol")
-            .expect("frigate should have a symbol component");
-
+        // Spot-check that symbol config uses sidc_template only.
         assert!(
-            symbol.data.get("sidc").is_some(),
-            "symbol.data missing key 'sidc': {:?}",
+            symbol.data.get("sidc_template").is_some(),
+            "symbol.data missing 'sidc_template': {:?}",
             symbol.data
         );
     }

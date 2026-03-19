@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SIDC help — Naval Game</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e8eef5;
+      --muted: #9aa7b8;
+      --accent: #4a9eff;
+      --border: rgba(255,255,255,0.1);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      padding: 24px 20px 48px;
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 { font-size: 1.75rem; margin-top: 0; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+    p, li { color: var(--muted); }
+    a { color: var(--accent); }
+    code { background: var(--panel); padding: 0.12em 0.35em; border-radius: 4px; font-size: 0.9em; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 0.75rem 0; }
+    th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+    th { background: var(--panel); color: var(--text); }
+    .seg { font-family: ui-monospace, monospace; }
+    .note { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin: 1rem 0; }
+    .attribution { font-size: 0.85rem; }
+    iframe {
+      width: 100%;
+      min-height: 720px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <h1>Symbol Identification Code (SIDC)</h1>
+  <p>
+    A <strong>SIDC</strong> identifies a military symbol; this project follows <strong>APP-6D</strong>-aligned data (via <code>milstd</code> <code>app6d</code> in the builder) and the same numeric SIDC layout the server uses.
+    The server stores symbols as a <strong>hyphenated</strong> SIDC string (10 segments). Entity YAML uses a structured
+    <code>sidc_template</code> with human-readable enum fields; the server compiles that into the canonical hyphenated form.
+    The map and SIDC builder render with <a href="https://github.com/spatialillusions/milsymbol" target="_blank" rel="noopener noreferrer">milsymbol</a>
+    in <strong>APP-6</strong> mode (<code>standard: 'APP6'</code>), using a <strong>non-hyphenated</strong> SIDC — dashes are stripped only at render time.
+  </p>
+
+  <h2>Hyphenated segment layout (server)</h2>
+  <p>Segments are joined with <code>-</code>. Each segment length is fixed; digits only.</p>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Field</th><th>Length</th><th>YAML / meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="seg">1</td><td>version</td><td>2</td><td><code>sidc_template.version</code> (e.g. <code>10</code>)</td></tr>
+      <tr><td class="seg">2</td><td>context</td><td>1</td><td><code>context</code> enum → digit</td></tr>
+      <tr><td class="seg">3</td><td>standard identity</td><td>1</td><td><code>standard_identity</code> enum → digit</td></tr>
+      <tr><td class="seg">4</td><td>symbol set</td><td>2</td><td><code>symbol_set</code> enum → two-digit code</td></tr>
+      <tr><td class="seg">5</td><td>status</td><td>1</td><td><code>status</code> enum → digit</td></tr>
+      <tr><td class="seg">6</td><td>HQTFD</td><td>1</td><td><code>hqtfd</code> — <code>Hqtfd</code> enum in Rust (e.g. <code>not_applicable</code>) or legacy <code>"0"</code>…<code>"7"</code> (see table below)</td></tr>
+      <tr><td class="seg">7</td><td>amplifier</td><td>2</td><td><code>amplifier</code> — <code>Amplifier</code> enum (e.g. <code>unspecified</code>, <code>battalion_squadron</code>) or legacy two-digit string; must match <code>symbol_set</code></td></tr>
+      <tr><td class="seg">8</td><td>entity</td><td>6</td><td><code>entity</code> — <code>code_######</code> (e.g. <code>code_120204</code>) or legacy <code>"120204"</code></td></tr>
+      <tr><td class="seg">9</td><td>modifier 1</td><td>2</td><td><code>modifier_one</code> — <code>code_##</code> or legacy <code>"00"</code>…<code>"99"</code></td></tr>
+      <tr><td class="seg">10</td><td>modifier 2</td><td>2</td><td><code>modifier_two</code> — same as modifier 1</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Legal values — <code>context</code></h2>
+  <table>
+    <thead><tr><th>YAML (snake_case)</th><th>Digit</th></tr></thead>
+    <tbody>
+      <tr><td><code>reality</code></td><td class="seg">0</td></tr>
+      <tr><td><code>exercise</code></td><td class="seg">1</td></tr>
+      <tr><td><code>simulation</code></td><td class="seg">2</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Legal values — <code>standard_identity</code></h2>
+  <table>
+    <thead><tr><th>YAML (snake_case)</th><th>Digit</th></tr></thead>
+    <tbody>
+      <tr><td><code>pending</code></td><td class="seg">0</td></tr>
+      <tr><td><code>unknown</code></td><td class="seg">1</td></tr>
+      <tr><td><code>assumed_friend</code></td><td class="seg">2</td></tr>
+      <tr><td><code>friend</code></td><td class="seg">3</td></tr>
+      <tr><td><code>neutral</code></td><td class="seg">4</td></tr>
+      <tr><td><code>suspect_joker</code></td><td class="seg">5</td></tr>
+      <tr><td><code>hostile_faker</code></td><td class="seg">6</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Legal values — <code>symbol_set</code></h2>
+  <table>
+    <thead><tr><th>YAML (snake_case)</th><th>Code</th></tr></thead>
+    <tbody>
+      <tr><td><code>air</code></td><td class="seg">01</td></tr>
+      <tr><td><code>missile</code></td><td class="seg">02</td></tr>
+      <tr><td><code>space</code></td><td class="seg">05</td></tr>
+      <tr><td><code>unit</code></td><td class="seg">10</td></tr>
+      <tr><td><code>civilian</code></td><td class="seg">11</td></tr>
+      <tr><td><code>equipment</code></td><td class="seg">15</td></tr>
+      <tr><td><code>installation</code></td><td class="seg">20</td></tr>
+      <tr><td><code>control_measure</code></td><td class="seg">25</td></tr>
+      <tr><td><code>dismounted</code></td><td class="seg">27</td></tr>
+      <tr><td><code>surface</code></td><td class="seg">30</td></tr>
+      <tr><td><code>subsurface</code></td><td class="seg">35</td></tr>
+      <tr><td><code>mine</code></td><td class="seg">36</td></tr>
+      <tr><td><code>activity</code></td><td class="seg">40</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Legal values — <code>status</code></h2>
+  <table>
+    <thead><tr><th>YAML (snake_case)</th><th>Digit</th><th>Description (summary)</th></tr></thead>
+    <tbody>
+      <tr><td><code>present</code></td><td class="seg">0</td><td>Present</td></tr>
+      <tr><td><code>planned_anticipated_suspect</code></td><td class="seg">1</td><td>Planned / anticipated / suspect</td></tr>
+      <tr><td><code>present_fully_capable</code></td><td class="seg">2</td><td>Present, fully capable</td></tr>
+      <tr><td><code>present_damage</code></td><td class="seg">3</td><td>Present, damaged</td></tr>
+      <tr><td><code>present_destroyed</code></td><td class="seg">4</td><td>Present, destroyed</td></tr>
+      <tr><td><code>present_full_to_capacity</code></td><td class="seg">5</td><td>Present, full to capacity</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Legal values — <code>hqtfd</code> (1 digit)</h2>
+  <p>Headquarters / task force / dummy field. In YAML, use the <strong>snake_case</strong> identifier (server <code>Hqtfd</code> enum) or a single digit in quotes.</p>
+  <table>
+    <thead><tr><th>YAML (<code>snake_case</code>)</th><th>Digit</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>not_applicable</code></td><td class="seg">0</td><td>Not applicable</td></tr>
+      <tr><td><code>feint_dummy</code></td><td class="seg">1</td><td>Feint / dummy</td></tr>
+      <tr><td><code>headquarters</code></td><td class="seg">2</td><td>Headquarters</td></tr>
+      <tr><td><code>feint_dummy_headquarters</code></td><td class="seg">3</td><td>Feint / dummy headquarters</td></tr>
+      <tr><td><code>task_force</code></td><td class="seg">4</td><td>Task force</td></tr>
+      <tr><td><code>feint_dummy_task_force</code></td><td class="seg">5</td><td>Feint / dummy task force</td></tr>
+      <tr><td><code>task_force_headquarters</code></td><td class="seg">6</td><td>Task force headquarters</td></tr>
+      <tr><td><code>feint_dummy_task_force_headquarters</code></td><td class="seg">7</td><td>Feint / dummy task force headquarters</td></tr>
+    </tbody>
+  </table>
+
+  <h2><code>amplifier</code>, <code>entity</code>, modifiers</h2>
+  <p>
+    <code>amplifier</code> is two digits (amplifier + descriptor in the standard). Templates often use <code>00</code>.
+    <code>entity</code> is six digits identifying the specific symbol within the symbol set. Use the interactive picker below to choose valid combinations, then transcribe into YAML.
+    <code>modifier_one</code> and <code>modifier_two</code> are two digits each (often <code>00</code>).
+  </p>
+
+  <h2>Interactive SIDC builder</h2>
+  <p>
+    This app includes a lightweight builder (no extra Docker service):
+    <a href="/sidc-picker/index.html" target="_blank" rel="noopener noreferrer">open SIDC builder in a new tab</a>.
+    You can also embed it below.
+  </p>
+  <iframe title="SIDC builder" src="/sidc-picker/index.html?embed=1" loading="lazy"></iframe>
+
+  <div class="note attribution">
+    <strong>Attribution.</strong> The in-app builder and this reference follow the same SIDC field model as the MIT-licensed
+    <a href="https://github.com/kjellmf/sidc-picker" target="_blank" rel="noopener noreferrer">sidc-picker</a>
+    project; see also their live demo at
+    <a href="https://sidc.milsymb.net/" target="_blank" rel="noopener noreferrer">sidc.milsymb.net</a>.
+    Symbol preview uses <a href="https://github.com/spatialillusions/milsymbol" target="_blank" rel="noopener noreferrer">milsymbol</a> (MIT), vendored at <code>/vendor/milsymbol/milsymbol.js</code> with CDN fallback on the builder page.
+  </div>
+</body>
+</html>

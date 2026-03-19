@@ -7,7 +7,9 @@
     "dev": "VITE_APP_AUTO_OPEN=true vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "vendor:milsymbol": "node scripts/vendor-milsymbol.cjs",
+    "postinstall": "node scripts/vendor-milsymbol.cjs"
   },
   "dependencies": {
     "@turf/turf": "^7.3.4",

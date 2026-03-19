@@ -14,4 +14,12 @@ This game is built on a client-server architecture. The game state is maintained
 
 ## Deployment
 
-The game is deployed as Docker compose.yaml with one container for the server and one container for the client.
+The game is deployed as Docker compose.yaml with containers for the server, the client dev server (Vite), and nginx as a reverse proxy. The **SIDC builder** is a static page shipped with the client at **`/sidc-picker/index.html`** (no separate sidc-picker container).
+
+### SIDC help
+
+From the in-app hamburger menu, **SIDC help** opens a reference page in a new browser tab (`/help/sidc.html`): overview of SIDC, legal values for template enums, an embedded interactive picker, and license attribution.
+
+## Third-party — SIDC reference & preview
+
+Our SIDC field layout is informed by [kjellmf/sidc-picker](https://github.com/kjellmf/sidc-picker) (MIT). The map and in-app SIDC builder use [milsymbol](https://github.com/spatialillusions/milsymbol) (MIT) in **APP-6** drawing mode (`standard: 'APP6'`), aligned with **APP-6D** / `milstd` `app6d` picker data. The library loads from **`client/public/vendor/milsymbol/milsymbol.js`** first (offline-friendly), with jsDelivr as fallback. After upgrading the `milsymbol` npm dependency, run **`npm run vendor:milsymbol`** in `client/`. See **`/help/sidc.html`** for links and attribution.

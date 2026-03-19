@@ -5,7 +5,7 @@ use socketioxide::{
 };
 use tracing::{debug, info, warn};
 use tower_http::cors::CorsLayer;
-use serde::Deserialize;
+use serde::{de::Error as _, Deserialize, Deserializer};
 use std::fs;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,9 @@ use tokio::time::{self, Duration};
 
 mod ecs;
 mod dto;
+mod sidc;
 use ecs::{Allegiance, EntityConfig, WorldTemplate};
+use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
 use dto::{
     CreateSessionData, JoinSessionData, ShipSnapshot, SnapshotRequestData, SessionPublic,
     SessionsListDto, StopSessionData, WorldSnapshotDto,
@@ -37,9 +39,36 @@ struct MovementConfig {
     acceleration: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 struct SymbolConfig {
     sidc: String,
+}
+
+/// YAML shape: `{ sidc_template: { ... } }` (not an externally tagged enum key like `Template:`).
+#[derive(Debug, Deserialize)]
+struct SymbolConfigWire {
+    sidc_template: SidcTemplate,
+}
+
+impl<'de> Deserialize<'de> for SymbolConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = SymbolConfigWire::deserialize(deserializer)?;
+        let sidc = wire
+            .sidc_template
+            .to_sidc_string()
+            .map_err(D::Error::custom)?;
+
+        if Sidc::parse(&sidc).is_none() {
+            return Err(D::Error::custom(
+                "symbol.sidc must be a valid hyphenated SIDC string",
+            ));
+        }
+
+        Ok(SymbolConfig { sidc })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +79,20 @@ struct ShipState {
     transform: TransformWorld,
     movement: MovementConfig,
     symbol: SymbolConfig,
+}
+
+impl ShipState {
+    fn status(&self) -> Option<Status> {
+        status_from_sidc(&self.symbol.sidc)
+    }
+
+    fn set_status(&mut self, status: Status) -> bool {
+        let Some(updated_sidc) = sidc_with_status(&self.symbol.sidc, status) else {
+            return false;
+        };
+        self.symbol.sidc = updated_sidc;
+        true
+    }
 }
 
 fn on_session_closed_stub(_public: &SessionPublic) {

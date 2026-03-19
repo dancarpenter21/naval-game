@@ -114,6 +114,13 @@ body, html {
   background: rgba(255, 80, 80, 0.18);
 }
 
+a.menu-item.menu-link {
+  display: block;
+  text-decoration: none;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
 /* Ensure Leaflet controls don't overlap strangely with our UI if we add more */
 .leaflet-container {
   font-family: 'Inter', sans-serif;

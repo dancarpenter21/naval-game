@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SIDC builder — Naval Game</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e8eef5;
+      --muted: #9aa7b8;
+      --accent: #4a9eff;
+      --border: rgba(255,255,255,0.12);
+      --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 20px;
+      max-width: 720px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 { font-size: 1.5rem; margin-top: 0; }
+    p, label { color: var(--muted); font-size: 0.9rem; }
+    a { color: var(--accent); }
+    .row { margin-bottom: 12px; }
+    label { display: block; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    select, input {
+      width: 100%;
+      max-width: min(100%, 640px);
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    .out {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      font-family: ui-monospace, monospace;
+      font-size: 0.85rem;
+      word-break: break-all;
+    }
+    .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    button {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: rgba(255,255,255,0.12); }
+    #preview {
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 16px;
+    }
+    #preview svg { max-width: 100%; height: auto; }
+    .err { color: #f87171; font-size: 0.9rem; margin-top: 8px; }
+    .top-links { margin-bottom: 16px; font-size: 0.9rem; }
+    .yaml { white-space: pre-wrap; font-size: 0.8rem; }
+    .note { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+    /* Used when this page is iframed (e.g. from /help/sidc.html): show only the form + outputs */
+    html.embed .embed-chrome { display: none !important; }
+    html.embed body {
+      padding: 14px 16px 20px;
+    }
+    html.embed h1 {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        if (new URLSearchParams(window.location.search).get('embed') === '1') {
+          document.documentElement.classList.add('embed');
+        }
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+</head>
+<body>
+  <div class="top-links embed-chrome">
+    <a href="/help/sidc.html">← SIDC help &amp; reference</a>
+    &nbsp;·&nbsp;
+    <a href="/">Main app</a>
+  </div>
+
+  <h1>SIDC builder</h1>
+  <p class="embed-chrome">
+    Build a <strong>hyphenated</strong> SIDC string matching the server’s <code>sidc_template</code> layout.
+    Preview uses <strong>milsymbol</strong> in <strong>APP-6</strong> drawing mode with the <strong>non-hyphenated</strong> SIDC (same as the map client and server <code>app6d</code> data).
+    The library is loaded from this app first (<code>/vendor/milsymbol/milsymbol.js</code>) for offline use; if that fails, jsDelivr is used as a fallback.
+  </p>
+
+  <!-- Field labels match kjellmf/sidc-picker SidcPicker.vue (https://sidc.milsymb.net/#/APP6) -->
+  <form id="f" autocomplete="off">
+    <div class="row">
+      <label for="version">Version</label>
+      <input id="version" maxlength="2" pattern="[0-9]{2}" value="10" required aria-describedby="version-hint" />
+      <div class="note" id="version-hint">First two SIDC digits (e.g. <code>10</code>).</div>
+    </div>
+    <div class="row">
+      <label for="context">Context</label>
+      <select id="context"></select>
+    </div>
+    <div class="row">
+      <label for="standard_identity">Standard identity</label>
+      <select id="standard_identity"></select>
+    </div>
+    <div class="row">
+      <label for="symbol_set">Symbol set</label>
+      <select id="symbol_set"></select>
+    </div>
+    <div class="row">
+      <label for="status">Status</label>
+      <select id="status"></select>
+    </div>
+    <div class="row">
+      <label for="hqtfd">Headquarters/Task force/Dummy</label>
+      <select id="hqtfd"></select>
+    </div>
+    <div class="row">
+      <label for="amplifier">Echelon/Mobility/Towed array</label>
+      <select id="amplifier" required></select>
+      <div class="note">Options depend on symbol set, same as <a href="https://github.com/kjellmf/sidc-picker/blob/master/src/components/SidcPicker.vue" target="_blank" rel="noopener noreferrer">sidc-picker</a> / <a href="https://sidc.milsymb.net/#/APP6" target="_blank" rel="noopener noreferrer">sidc.milsymb.net</a>.</div>
+    </div>
+    <div class="row">
+      <label for="entity">Main icon</label>
+      <select id="entity" required></select>
+      <div class="note">From <code>milstd</code> <code>app6d</code> for the selected symbol set.</div>
+    </div>
+    <div class="row">
+      <label for="modifier_one">Modifier 1</label>
+      <select id="modifier_one" required></select>
+    </div>
+    <div class="row">
+      <label for="modifier_two">Modifier 2</label>
+      <select id="modifier_two" required></select>
+    </div>
+  </form>
+
+  <div class="out" id="hyphen-out"></div>
+  <div class="out" id="compact-out"></div>
+  <div class="btns">
+    <button type="button" id="copy-hyphen">Copy hyphenated</button>
+    <button type="button" id="copy-compact">Copy compact (milsymbol)</button>
+  </div>
+
+  <h2 style="margin-top:1.5rem;font-size:1.1rem;">Preview</h2>
+  <div id="preview"><span class="muted">Loading milsymbol…</span></div>
+  <div class="err" id="preview-err" hidden></div>
+
+  <h2 style="margin-top:1.5rem;font-size:1.1rem;">Example YAML snippet</h2>
+  <div class="out yaml" id="yaml-out"></div>
+
+  <p class="embed-chrome" style="margin-top:2rem;font-size:0.85rem;color:var(--muted);">
+    Dropdown labels match <a href="https://github.com/kjellmf/sidc-picker/blob/master/src/symbology/values.js" target="_blank" rel="noopener noreferrer">sidc-picker <code>values.js</code></a>;
+    symbol set, entity, and modifiers come from <code>milstd</code> <code>app6d</code>; amplifier options follow
+    <a href="https://github.com/kjellmf/sidc-picker/blob/master/src/components/SidcPicker.vue" target="_blank" rel="noopener noreferrer"><code>SidcPicker.vue</code> <code>emtValues</code></a>
+    (echelon / mobility / leadership / towed array by symbol set). YAML still uses serde names from our Rust <code>sidc</code> module.
+    See also <a href="https://sidc.milsymb.net/" target="_blank" rel="noopener noreferrer">sidc.milsymb.net</a>.
+    Symbol preview: <a href="https://github.com/spatialillusions/milsymbol" target="_blank" rel="noopener noreferrer">milsymbol</a> (MIT) with <code>standard: 'APP6'</code>, vendored under <code>/vendor/milsymbol/</code> with optional CDN fallback.
+  </p>
+
+  <script type="module">
+    // Dropdown labels match https://github.com/kjellmf/sidc-picker/blob/master/src/symbology/values.js
+    const contextValues = [
+      { value: '0', text: 'Reality' },
+      { value: '1', text: 'Exercise' },
+      { value: '2', text: 'Simulation' },
+    ];
+    const sidValues = [
+      { value: '0', text: 'Pending' },
+      { value: '1', text: 'Unknown' },
+      { value: '2', text: 'Assumed Friend' },
+      { value: '3', text: 'Friend' },
+      { value: '4', text: 'Neutral' },
+      { value: '5', text: 'Suspect/Joker' },
+      { value: '6', text: 'Hostile/Faker' },
+    ];
+    const statusValues = [
+      { value: '0', text: 'Present' },
+      { value: '1', text: 'Planned/Anticipated/Suspect' },
+      { value: '2', text: 'Present/Fully capable' },
+      { value: '3', text: 'Present/Damaged' },
+      { value: '4', text: 'Present/Destroyed' },
+      { value: '5', text: 'Present/Full to capacity' },
+    ];
+    const HQTFDummyValues = [
+      { value: '0', text: 'Not Applicable' },
+      { value: '1', text: 'Feint/Dummy' },
+      { value: '2', text: 'Headquarters' },
+      { value: '3', text: 'Feint/Dummy Headquarters' },
+      { value: '4', text: 'Task Force' },
+      { value: '5', text: 'Feint/Dummy Task Force' },
+      { value: '6', text: 'Task Force Headquarters' },
+      { value: '7', text: 'Feint/Dummy Task Force Headquarters' },
+    ];
+
+    // Maps SIDC digits → server YAML (serde snake_case) — must stay aligned with server/src/sidc.rs
+    const CONTEXT_YAML = { '0': 'reality', '1': 'exercise', '2': 'simulation' };
+    const SID_YAML = {
+      '0': 'pending',
+      '1': 'unknown',
+      '2': 'assumed_friend',
+      '3': 'friend',
+      '4': 'neutral',
+      '5': 'suspect_joker',
+      '6': 'hostile_faker',
+    };
+    const STATUS_YAML = {
+      '0': 'present',
+      '1': 'planned_anticipated_suspect',
+      '2': 'present_fully_capable',
+      '3': 'present_damage',
+      '4': 'present_destroyed',
+      '5': 'present_full_to_capacity',
+    };
+    const SYMBOL_SET_YAML = {
+      '01': 'air',
+      '02': 'missile',
+      '05': 'space',
+      '10': 'unit',
+      '11': 'civilian',
+      '15': 'equipment',
+      '20': 'installation',
+      '25': 'control_measure',
+      '27': 'dismounted',
+      '30': 'surface',
+      '35': 'subsurface',
+      '36': 'mine',
+      '40': 'activity',
+    };
+
+    // Must match server/src/sidc.rs Hqtfd (serde snake_case).
+    const HQTFD_YAML = {
+      '0': 'not_applicable',
+      '1': 'feint_dummy',
+      '2': 'headquarters',
+      '3': 'feint_dummy_headquarters',
+      '4': 'task_force',
+      '5': 'feint_dummy_task_force',
+      '6': 'task_force_headquarters',
+      '7': 'feint_dummy_task_force_headquarters',
+    };
+
+    // Must match server/src/sidc.rs Amplifier (serde snake_case) — keyed by 2-digit code.
+    const AMPLIFIER_YAML_BY_CODE = {
+      '00': 'unspecified',
+      '11': 'team_crew',
+      '12': 'squad',
+      '13': 'section',
+      '14': 'platoon_detachment',
+      '15': 'company_battery_troop',
+      '16': 'battalion_squadron',
+      '17': 'regiment_group',
+      '18': 'brigade',
+      '21': 'division',
+      '22': 'corps_mef',
+      '23': 'army',
+      '24': 'army_group_front',
+      '25': 'region_theater',
+      '26': 'command',
+      '31': 'wheeled_limited_cross_country',
+      '32': 'wheeled_cross_country',
+      '33': 'tracked',
+      '34': 'wheeled_and_tracked_combination',
+      '35': 'towed',
+      '36': 'railway',
+      '37': 'pack_animals',
+      '41': 'over_snow_prime_mover',
+      '42': 'sled',
+      '51': 'barge',
+      '52': 'amphibious',
+      '71': 'leader',
+      '61': 'short_towed_array',
+      '62': 'long_towed_array',
+    };
+
+    // Symbol set display names only (no leading code) — same app6d keys as sidc-picker APP6 mode.
+    const SYMBOL_SET_FALLBACK = [
+      { value: '01', text: 'Air' },
+      { value: '02', text: 'Air missile' },
+      { value: '05', text: 'Space' },
+      { value: '10', text: 'Land unit' },
+      { value: '11', text: 'Land civilian unit/Organization' },
+      { value: '15', text: 'Land equipment' },
+      { value: '20', text: 'Land installations' },
+      { value: '25', text: 'Control measure' },
+      { value: '27', text: 'Dismounted individual' },
+      { value: '30', text: 'Sea surface' },
+      { value: '35', text: 'Sea subsurface' },
+      { value: '36', text: 'Mine warfare' },
+      { value: '40', text: 'Activity/Event' },
+    ];
+
+    // https://github.com/kjellmf/sidc-picker/blob/master/src/symbology/values.js — amplifier field by symbol set (SidcPicker.vue emtValues)
+    const UNIT_SYMBOLSET_VALUE = '10';
+    const EQUIPMENT_SYMBOLSET_VALUE = '15';
+    const DISMOUNTED_SYMBOLSET_VALUE = '27';
+    const SURFACE_SYMBOLSET_VALUE = '30';
+    const SUBSURFACE_SYMBOLSET_VALUE = '35';
+
+    const echelonValues = [
+      { value: '00', text: 'Unspecified' },
+      { value: '11', text: 'Team/Crew' },
+      { value: '12', text: 'Squad' },
+      { value: '13', text: 'Section' },
+      { value: '14', text: 'Platoon/Detachment' },
+      { value: '15', text: 'Company/Battery/Troop' },
+      { value: '16', text: 'Battalion/Squadron' },
+      { value: '17', text: 'Regiment/Group' },
+      { value: '18', text: 'Brigade' },
+      { value: '21', text: 'Division' },
+      { value: '22', text: 'Corps/MEF' },
+      { value: '23', text: 'Army' },
+      { value: '24', text: 'Army Group/Front' },
+      { value: '25', text: 'Region/Theater' },
+      { value: '26', text: 'Command' },
+    ];
+    const mobilityValues = [
+      { value: '00', text: 'Unspecified' },
+      { value: '31', text: 'Wheeled limited cross country' },
+      { value: '32', text: 'Wheeled cross country' },
+      { value: '33', text: 'Tracked' },
+      { value: '34', text: 'Wheeled and tracked combination' },
+      { value: '35', text: 'Towed' },
+      { value: '36', text: 'Railway' },
+      { value: '37', text: 'Pack animals' },
+      { value: '41', text: 'Over snow (prime mover)' },
+      { value: '42', text: 'Sled' },
+      { value: '51', text: 'Barge' },
+      { value: '52', text: 'Amphibious' },
+    ];
+    const leadershipValues = [
+      { value: '00', text: 'Unspecified' },
+      { value: '71', text: 'Leader' },
+    ];
+    const towedArrayValues = [
+      { value: '00', text: 'Unspecified' },
+      { value: '61', text: 'Short towed array' },
+      { value: '62', text: 'Long towed array' },
+    ];
+    const amplifierUnspecified = [{ value: '00', text: 'Unspecified' }];
+
+    const CDN_MILSTD = 'https://cdn.jsdelivr.net/npm/milstd@0.1.6/milstd.esm.js';
+
+    /** @type {Record<string, object> | null} */
+    let app6d = null;
+
+    function fillSelectObjects(id, items, selectedValue) {
+      const el = document.getElementById(id);
+      el.innerHTML = '';
+      for (const { value, text } of items) {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = text;
+        el.appendChild(o);
+      }
+      if (selectedValue != null && items.some((it) => it.value === selectedValue)) {
+        el.value = selectedValue;
+      } else if (items.length) {
+        el.value = items[0].value;
+      }
+    }
+
+    function amplifierOptionsForSymbolSet(symbolSetCode) {
+      switch (symbolSetCode) {
+        case UNIT_SYMBOLSET_VALUE:
+          return echelonValues;
+        case EQUIPMENT_SYMBOLSET_VALUE:
+          return mobilityValues;
+        case DISMOUNTED_SYMBOLSET_VALUE:
+          return leadershipValues;
+        case SURFACE_SYMBOLSET_VALUE:
+        case SUBSURFACE_SYMBOLSET_VALUE:
+          return towedArrayValues;
+        default:
+          return amplifierUnspecified;
+      }
+    }
+
+    function normalizeEntityCode(code) {
+      const d = String(code ?? '').replace(/\D/g, '');
+      return d.padStart(6, '0').slice(-6);
+    }
+
+    function mainIconLabel(mi) {
+      let t = mi.entity || '';
+      if (mi['entity type']) t += ` - ${mi['entity type']}`;
+      if (mi['entity subtype']) t += ` - ${mi['entity subtype']}`;
+      return t.trim() || normalizeEntityCode(mi.code);
+    }
+
+    function entityOptionsForSet(set) {
+      const raw = set?.['main icon'];
+      const list = Array.isArray(raw) ? raw : [];
+      if (!list.length) {
+        return [{ value: '000000', text: 'Unspecified' }];
+      }
+      return list.map((mi) => ({
+        value: normalizeEntityCode(mi.code),
+        text: mainIconLabel(mi),
+      }));
+    }
+
+    function modifierOptionsForSet(set, n) {
+      const key = n === 1 ? 'modifier 1' : 'modifier 2';
+      const raw = set?.[key];
+      const list = Array.isArray(raw) ? raw : [];
+      if (!list.length) {
+        return [{ value: '00', text: 'Unspecified' }];
+      }
+      return list.map((m) => ({
+        value: String(m.code ?? '00').replace(/\D/g, '').padStart(2, '0').slice(-2),
+        text: m.modifier || m.code || '—',
+      }));
+    }
+
+    function syncDependentSelects(preserve = {}) {
+      const sym = document.getElementById('symbol_set').value;
+      const set = app6d?.[sym] ?? null;
+
+      const ampOpts = amplifierOptionsForSymbolSet(sym);
+      const wantAmp = preserve.amplifier;
+      const ampSel =
+        wantAmp && ampOpts.some((o) => o.value === wantAmp) ? wantAmp : ampOpts[0]?.value ?? '00';
+      fillSelectObjects('amplifier', ampOpts, ampSel);
+
+      const entOpts = entityOptionsForSet(set);
+      const wantEnt = preserve.entity;
+      const entSel =
+        wantEnt && entOpts.some((o) => o.value === wantEnt)
+          ? wantEnt
+          : entOpts.find((o) => o.value === '120204')?.value ?? entOpts[0]?.value ?? '000000';
+      fillSelectObjects('entity', entOpts, entSel);
+
+      const m1Opts = modifierOptionsForSet(set, 1);
+      const wantM1 = preserve.modifier_one;
+      const m1Sel =
+        wantM1 && m1Opts.some((o) => o.value === wantM1) ? wantM1 : m1Opts[0]?.value ?? '00';
+      fillSelectObjects('modifier_one', m1Opts, m1Sel);
+
+      const m2Opts = modifierOptionsForSet(set, 2);
+      const wantM2 = preserve.modifier_two;
+      const m2Sel =
+        wantM2 && m2Opts.some((o) => o.value === wantM2) ? wantM2 : m2Opts[0]?.value ?? '00';
+      fillSelectObjects('modifier_two', m2Opts, m2Sel);
+    }
+
+    async function loadApp6d() {
+      try {
+        const mod = await import(CDN_MILSTD);
+        app6d = mod.app6d;
+      } catch {
+        app6d = null;
+      }
+    }
+
+    function symbolSetSelectOptions() {
+      if (!app6d) return SYMBOL_SET_FALLBACK;
+      return Object.keys(app6d)
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        .map((code) => ({
+          value: code,
+          text: app6d[code]?.name ?? code,
+        }));
+    }
+
+    await loadApp6d();
+
+    fillSelectObjects('context', contextValues, '0');
+    fillSelectObjects('standard_identity', sidValues, '6');
+    fillSelectObjects('status', statusValues, '2');
+    fillSelectObjects('hqtfd', HQTFDummyValues, '0');
+    fillSelectObjects('symbol_set', symbolSetSelectOptions(), '30');
+    syncDependentSelects({ entity: '120204', amplifier: '00', modifier_one: '00', modifier_two: '00' });
+
+    function digits(el, len) {
+      let v = (el.value || '').replace(/\D/g, '');
+      if (v.length > len) v = v.slice(0, len);
+      el.value = v;
+      return v;
+    }
+
+    function sel2(id) {
+      const v = (document.getElementById(id).value || '00').replace(/\D/g, '');
+      return v.padStart(2, '0').slice(-2);
+    }
+
+    function sel6(id) {
+      const v = (document.getElementById(id).value || '000000').replace(/\D/g, '');
+      return v.padStart(6, '0').slice(-6);
+    }
+
+    /** Two-digit version string (same trimming as segment 1 in buildHyphenated). */
+    function versionTwoDigits() {
+      let v = (document.getElementById('version').value || '').replace(/\D/g, '');
+      if (v.length > 2) v = v.slice(0, 2);
+      return v.padStart(2, '0').slice(-2);
+    }
+
+    function buildHyphenated() {
+      const version = digits(document.getElementById('version'), 2);
+      const ctx = document.getElementById('context').value;
+      const sid = document.getElementById('standard_identity').value;
+      const sym = document.getElementById('symbol_set').value;
+      const st = document.getElementById('status').value;
+      const hq = document.getElementById('hqtfd').value;
+      const amp = sel2('amplifier');
+      const ent = sel6('entity');
+      const m1 = sel2('modifier_one');
+      const m2 = sel2('modifier_two');
+      if (version.length !== 2 || amp.length !== 2 || ent.length !== 6 || m1.length !== 2 || m2.length !== 2) {
+        return null;
+      }
+      return `${version}-${ctx}-${sid}-${sym}-${st}-${hq}-${amp}-${ent}-${m1}-${m2}`;
+    }
+
+    function sidcSegments10(h) {
+      if (!h || typeof h !== 'string') return null;
+      const p = h.split('-');
+      return p.length === 10 ? p : null;
+    }
+
+    function yamlSnippet(h) {
+      const ctx = CONTEXT_YAML[document.getElementById('context').value] || 'reality';
+      const sid = SID_YAML[document.getElementById('standard_identity').value] || 'friend';
+      const sym = SYMBOL_SET_YAML[document.getElementById('symbol_set').value] || 'surface';
+      const st = STATUS_YAML[document.getElementById('status').value] || 'present';
+      const p = sidcSegments10(h);
+      const version = p ? p[0] : versionTwoDigits();
+      const hq = p ? p[5] : document.getElementById('hqtfd').value;
+      const amp = p ? p[6] : sel2('amplifier');
+      const ent = p ? p[7] : sel6('entity');
+      const m1 = p ? p[8] : sel2('modifier_one');
+      const m2 = p ? p[9] : sel2('modifier_two');
+      const hqYaml = HQTFD_YAML[hq] || 'not_applicable';
+      const ampYaml = AMPLIFIER_YAML_BY_CODE[amp] || 'unspecified';
+      return `    - kind: symbol
+      data:
+        # Paste-ready sidc_template — field names/values match server SidcTemplate (server/src/sidc.rs).
+        # Segments compile to hyphenated SIDC: seg1..seg10 digits.
+        #   seg1 version | seg2 context | seg3 standard_identity | seg4 symbol_set | seg5 status
+        #   seg6 hqtfd (Hqtfd enum) | seg7 amplifier (Amplifier enum, must fit symbol_set)
+        #   seg8 entity (code_###### or "######") | seg9/10 modifiers (code_## or "##")
+        sidc_template:
+          version: "${version}"
+          context: ${ctx}
+          standard_identity: ${sid}
+          symbol_set: ${sym}
+          status: ${st}
+          hqtfd: ${hqYaml}
+          amplifier: ${ampYaml}
+          entity: code_${ent}
+          modifier_one: code_${m1}
+          modifier_two: code_${m2}
+# Compiled hyphenated SIDC (seg1-seg2-…-seg10): ${h || '(incomplete)'}`;
+    }
+
+    const LOCAL_MS = '/vendor/milsymbol/milsymbol.js';
+    const CDN_MS = 'https://cdn.jsdelivr.net/npm/milsymbol@3.0.4/+esm';
+    /** Must match MapView.jsx — milsymbol only enables APP-6 drawing when this is exactly 'APP6'. */
+    const MILSYMBOL_STANDARD = 'APP6';
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error(`failed to load ${src}`));
+        document.head.appendChild(s);
+      });
+    }
+
+    let ms = null;
+    try {
+      await loadScript(LOCAL_MS);
+      ms = globalThis.ms;
+    } catch (eLocal) {
+      try {
+        const mod = await import(CDN_MS);
+        ms = mod.default ?? mod.ms;
+      } catch (eCdn) {
+        document.getElementById('preview').innerHTML = '';
+        const err = document.getElementById('preview-err');
+        err.hidden = false;
+        err.textContent =
+          'Could not load milsymbol (local /vendor/milsymbol/milsymbol.js or CDN). For offline builds, ensure the vendored file exists (run `npm run vendor:milsymbol` in client/).';
+      }
+    }
+    if (ms && typeof ms.setStandard === 'function') {
+      ms.setStandard(MILSYMBOL_STANDARD);
+    }
+
+    function refresh() {
+      const h = buildHyphenated();
+      document.getElementById('hyphen-out').textContent = h || '(fill all numeric fields)';
+      const compact = h ? h.replace(/-/g, '') : '';
+      document.getElementById('compact-out').textContent = compact || '—';
+      document.getElementById('yaml-out').textContent = h ? yamlSnippet(h) : '';
+
+      const prev = document.getElementById('preview');
+      const perr = document.getElementById('preview-err');
+      perr.hidden = true;
+      if (!ms || !compact || compact.length < 20) {
+        if (ms) prev.innerHTML = '<span class="muted">Invalid or incomplete SIDC</span>';
+        return;
+      }
+      try {
+        const symbol = new ms.Symbol(compact, { size: 96, standard: MILSYMBOL_STANDARD });
+        prev.innerHTML = symbol.asSVG();
+      } catch (e) {
+        prev.innerHTML = '';
+        perr.hidden = false;
+        perr.textContent = 'milsymbol could not render this SIDC: ' + (e && e.message ? e.message : String(e));
+      }
+    }
+
+    function onFormChange(ev) {
+      if (ev?.target?.id === 'symbol_set') {
+        syncDependentSelects();
+      }
+      refresh();
+    }
+
+    document.getElementById('f').addEventListener('input', refresh);
+    document.getElementById('f').addEventListener('change', onFormChange);
+
+    document.getElementById('copy-hyphen').onclick = async () => {
+      const t = document.getElementById('hyphen-out').textContent;
+      if (t && t[0] !== '(') await navigator.clipboard.writeText(t);
+    };
+    document.getElementById('copy-compact').onclick = async () => {
+      const t = document.getElementById('compact-out').textContent;
+      if (t && t !== '—') await navigator.clipboard.writeText(t);
+    };
+
+    refresh();
+  </script>
+</body>
+</html>

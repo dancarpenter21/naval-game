@@ -64,6 +64,27 @@ function App() {
                 {session && <div className="menu-subtitle">{session.name} ({session.id})</div>}
               </div>
 
+              <a
+                className="menu-item menu-link"
+                role="menuitem"
+                href="/help/sidc.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMenuOpen(false)}
+              >
+                SIDC help (opens in new tab)
+              </a>
+              <a
+                className="menu-item menu-link"
+                role="menuitem"
+                href="/sidc-picker/index.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMenuOpen(false)}
+              >
+                SIDC builder (opens in new tab)
+              </a>
+
               <button
                 className="menu-item danger"
                 type="button"

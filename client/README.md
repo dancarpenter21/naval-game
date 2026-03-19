@@ -1,6 +1,8 @@
-# Mil Symbols
+# Mil Symbols (APP-6)
 
-https://sidc.milsymb.net/#/2525
+Map and SIDC picker use [milsymbol](https://github.com/spatialillusions/milsymbol) with `standard: 'APP6'`, aligned with server `app6d` / APP-6D data.
+
+Reference picker (APP-6 mode): <https://sidc.milsymb.net/#/APP6>
 
 # React + Vite
 
