@@ -4,6 +4,7 @@ import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
+import missileOutlinePngUrl from '../assets/missile-outline-transparent.png';
 
 /** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
 const MILSYMBOL_STANDARD = 'APP6';
@@ -78,6 +79,18 @@ const createMilSymbolIcon = ({ sidc, name }) => {
     });
   }
 };
+
+const isMissileSidc = (sidc) => {
+  // Hyphenated SIDC segments: seg4 is symbol_set (we treat 02 as "missile").
+  // Example format: seg1-seg2-seg3-seg4-seg5-...
+  const parts = String(sidc ?? '').split('-');
+  return parts.length >= 4 && parts[3] === '02';
+};
+
+// Used by the alpha-mask SVG for the missile marker.
+// Keep in sync with `client/src/assets/missile-outline-transparent.png`.
+const MISSILE_OUTLINE_PNG_W = 1024;
+const MISSILE_OUTLINE_PNG_H = 1536;
 
 const ShipDtoSchema = z.object({
   id: z.string(),
@@ -175,13 +188,31 @@ const MapView = ({ socket, session }) => {
     return () => ro.disconnect();
   }, []);
 
-  const center = entities.length > 0 ? [entities[0].lat_deg, entities[0].lon_deg] : [35.0, -40.0];
+  const playerTeam = String(session?.player_team ?? 'white').toLowerCase();
+
   const redTeamEntities = entities.filter(
     (s) => String(s.allegiance ?? 'hostile').toLowerCase() === 'hostile',
   );
   const blueTeamEntities = entities.filter(
     (s) => String(s.allegiance ?? '').toLowerCase() === 'friendly',
   );
+
+  const visibleRedTeamEntities =
+    playerTeam === 'white' || playerTeam === 'red' ? redTeamEntities : [];
+  const visibleBlueTeamEntities =
+    playerTeam === 'white' || playerTeam === 'blue' ? blueTeamEntities : [];
+
+  const visibleEntities =
+    playerTeam === 'white'
+      ? entities
+      : playerTeam === 'red'
+        ? redTeamEntities
+        : playerTeam === 'blue'
+          ? blueTeamEntities
+          : entities;
+
+  const center =
+    visibleEntities.length > 0 ? [visibleEntities[0].lat_deg, visibleEntities[0].lon_deg] : [35.0, -40.0];
 
   // Unit card size is a fixed fraction of the map height.
   const unitCardHeight = outerSize.height ? outerSize.height * 0.1 : 30;
@@ -209,10 +240,61 @@ const MapView = ({ socket, session }) => {
     const next = new Map();
     for (const entity of entities) {
       const entityKey = `${entity.id}:${entity.sidc}`;
-      next.set(entityKey, createMilSymbolIcon({
-        sidc: entity.sidc,
-        name: entity.name,
-      }));
+      if (isMissileSidc(entity.sidc)) {
+        const color = entity.allegiance === 'hostile' ? '#ef4444' : '#3b82f6';
+        const heading = Number(entity.heading_deg ?? 0);
+        const maskId = `missile-mask-${entity.id}`;
+        next.set(
+          entityKey,
+          L.divIcon({
+            className: 'custom-missile-icon',
+            html: `
+              <div style="
+                color: ${color};
+                width: 32px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transform: rotate(${heading}deg);
+                transform-origin: 50% 50%;
+              ">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 ${MISSILE_OUTLINE_PNG_W} ${MISSILE_OUTLINE_PNG_H}" aria-hidden="true">
+                  <defs>
+                    <mask id="${maskId}" mask-type="alpha">
+                      <image
+                        href="${missileOutlinePngUrl}"
+                        x="0"
+                        y="0"
+                        width="${MISSILE_OUTLINE_PNG_W}"
+                        height="${MISSILE_OUTLINE_PNG_H}"
+                      />
+                    </mask>
+                  </defs>
+                  <rect
+                    x="0"
+                    y="0"
+                    width="${MISSILE_OUTLINE_PNG_W}"
+                    height="${MISSILE_OUTLINE_PNG_H}"
+                    fill="currentColor"
+                    mask="url(#${maskId})"
+                  />
+                </svg>
+              </div>
+            `,
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
+          })
+        );
+      } else {
+        next.set(
+          entityKey,
+          createMilSymbolIcon({
+            sidc: entity.sidc,
+            name: entity.name,
+          })
+        );
+      }
     }
     return next;
   }, [entities]);
@@ -234,9 +316,9 @@ const MapView = ({ socket, session }) => {
           pointerEvents: 'none',
         }}
       >
-        <div><strong>Entities</strong>: {entities.length}</div>
+        <div><strong>Entities</strong>: {visibleEntities.length}</div>
         <div style={{ opacity: 0.85 }}>
-          {entities.map((s) => s.id).join(', ')}
+          {visibleEntities.map((s) => s.id).join(', ')}
         </div>
       </div>
 
@@ -254,7 +336,7 @@ const MapView = ({ socket, session }) => {
           pointerEvents: 'none',
         }}
       >
-        {redTeamEntities.map((ship) => {
+        {visibleRedTeamEntities.map((ship) => {
           const svg = createMilSymbolSvg({ sidc: ship.sidc, size: redUnitIconSize });
 
           return (
@@ -324,7 +406,7 @@ const MapView = ({ socket, session }) => {
         })}
       </div>
 
-      {blueTeamEntities.length > 0 && (
+      {visibleBlueTeamEntities.length > 0 && (
         <div
           style={{
             position: 'absolute',
@@ -340,7 +422,7 @@ const MapView = ({ socket, session }) => {
             pointerEvents: 'none',
           }}
         >
-          {blueTeamEntities.map((ship) => {
+          {visibleBlueTeamEntities.map((ship) => {
             const svg = createMilSymbolSvg({ sidc: ship.sidc, size: blueUnitIconSize });
 
             return (
@@ -421,7 +503,7 @@ const MapView = ({ socket, session }) => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
         />
-        {entities.map((ship) => {
+        {visibleEntities.map((ship) => {
           const entityKey = `${ship.id}:${ship.sidc}`;
           const icon = markerIconsByEntityKey.get(entityKey);
           return (

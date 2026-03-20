@@ -16,16 +16,17 @@ use tokio::time::{self, Duration};
 
 mod dto;
 mod ecs;
+mod domain;
 mod scenario;
 mod sidc;
 use ecs::{Allegiance, EntityConfig, WorldTemplate};
 use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
+use domain::{PlayerTeam, ScenarioSideEntity, ScenarioSummary, SessionPublic};
 use dto::{
-    CreateSessionData, ErrorDto, JoinSessionData, ScenarioSummaryDto, ScenariosListDto,
-    ShipSnapshotDto,
-    SnapshotRequestData, SessionPublic, SessionsListDto, ScenarioSideEntityDto, StopSessionData,
-    WorldSnapshotDto,
+    CreateSessionDto, ErrorDto, JoinSessionDto, PlayerTeamDto, ScenarioSummaryDto, ScenariosListDto,
+    SessionParticipantDto, ShipSnapshotDto, SnapshotRequestDto, SessionPublicDto,
+    SessionsListDto, ScenarioSideEntityDto, StopSessionDto, WorldSnapshotDto,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -106,6 +107,8 @@ fn on_session_closed_stub(_public: &SessionPublic) {
 
 struct GameSession {
     public: SessionPublic,
+    /// Team assignment per connected socket (keyed by `socket.id`).
+    player_teams: HashMap<String, PlayerTeam>,
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     _loop_handle: JoinHandle<()>,
     world: Arc<Mutex<Vec<ShipState>>>,
@@ -114,27 +117,27 @@ struct GameSession {
 #[derive(Clone)]
 struct ScenarioCatalog {
     /// Stable list for UI (same order as directory sort).
-    summaries: Vec<ScenarioSummaryDto>,
+    summaries: Vec<ScenarioSummary>,
     by_id: HashMap<String, LoadedScenario>,
 }
 
-fn scenario_summary(world: &WorldTemplate, loaded: &LoadedScenario) -> ScenarioSummaryDto {
+fn scenario_summary(world: &WorldTemplate, loaded: &LoadedScenario) -> ScenarioSummary {
     let resolve = |eid: &str| {
         world
             .entities
             .iter()
             .find(|e| e.id == eid)
-            .map(|e| ScenarioSideEntityDto {
+            .map(|e| ScenarioSideEntity {
                 id: e.id.clone(),
                 name: e.name.clone(),
             })
-            .unwrap_or_else(|| ScenarioSideEntityDto {
+            .unwrap_or_else(|| ScenarioSideEntity {
                 id: eid.to_string(),
                 name: format!("{eid} (missing template)"),
             })
     };
 
-    ScenarioSummaryDto {
+    ScenarioSummary {
         id: loaded.id.clone(),
         name: loaded.display_name(),
         description: loaded.config.description.clone(),
@@ -492,7 +495,7 @@ fn on_connect(
         let io = io.clone();
         let world_template = world_template.clone();
         let scenario_catalog = scenario_catalog.clone();
-        socket.on("create_session", |socket: SocketRef, Data::<CreateSessionData>(data)| async move {
+        socket.on("create_session", |socket: SocketRef, Data::<CreateSessionDto>(data)| async move {
             let id = uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>();
 
             let scenario = if scenario_catalog.by_id.is_empty() {
@@ -543,9 +546,15 @@ fn on_connect(
                 }
             };
 
+            let session_name = data.name;
             let public = SessionPublic {
                 id: id.clone(),
-                name: data.name,
+                name: session_name.clone(),
+            };
+            let participant = SessionParticipantDto {
+                id: id.clone(),
+                name: session_name,
+                player_team: PlayerTeam::White.to_dto(),
             };
 
             let ships = spawn_initial_ships(&world_template, scenario);
@@ -570,8 +579,12 @@ fn on_connect(
                 io.clone(),
             );
             let world_for_session = world.clone();
+            let mut player_teams = HashMap::new();
+            // Session creator starts in the admin/white team.
+            player_teams.insert(socket.id.to_string(), PlayerTeam::White);
             let game_session = GameSession {
                 public: public.clone(),
+                player_teams,
                 stop_tx: Some(stop_tx),
                 _loop_handle: loop_handle,
                 world: world_for_session,
@@ -585,7 +598,7 @@ fn on_connect(
                 -1
             );
             socket.join(id.clone());
-            socket.emit("session_created", public).ok();
+            socket.emit("session_created", participant).ok();
         });
     }
 
@@ -596,7 +609,11 @@ fn on_connect(
                 .emit(
                     "scenarios_list",
                     ScenariosListDto {
-                        scenarios: catalog.summaries.clone(),
+                        scenarios: catalog
+                            .summaries
+                            .iter()
+                            .map(|s| s.to_dto())
+                            .collect(),
                     },
                 )
                 .ok();
@@ -607,18 +624,29 @@ fn on_connect(
         let store = store.clone();
         socket.on("get_sessions", |socket: SocketRef| async move {
             let store_lock = store.lock().await;
-            let sessions: Vec<SessionPublic> = store_lock.values().map(|s| s.public.clone()).collect();
+                let sessions: Vec<SessionPublicDto> = store_lock
+                .values()
+                    .map(|s| s.public.to_dto())
+                .collect();
             socket.emit("sessions_list", SessionsListDto { sessions }).ok();
         });
     }
 
     {
         let store = store.clone();
-        socket.on("join_session", |socket: SocketRef, Data::<JoinSessionData>(data)| async move {
-            let store_lock = store.lock().await;
-            if let Some(session) = store_lock.get(&data.id) {
+        socket.on("join_session", |socket: SocketRef, Data::<JoinSessionDto>(data)| async move {
+            let mut store_lock = store.lock().await;
+            if let Some(session) = store_lock.get_mut(&data.id) {
+                let player_team_dto = data.team;
+                let player_team = PlayerTeam::from_dto(player_team_dto);
+                session.player_teams.insert(socket.id.to_string(), player_team);
                 socket.join(data.id.clone());
-                socket.emit("session_joined", session.public.clone()).ok();
+                let participant = SessionParticipantDto {
+                    id: session.public.id.clone(),
+                    name: session.public.name.clone(),
+                    player_team: player_team_dto,
+                };
+                socket.emit("session_joined", participant).ok();
                 info!(
                     "User joined session user_socket_id={} session_name={} session_id={} tick_count={}",
                     socket.id,
@@ -653,7 +681,7 @@ fn on_connect(
         let store = store.clone();
         socket.on(
             "request_world_snapshot",
-            |socket: SocketRef, Data::<SnapshotRequestData>(data)| async move {
+            |socket: SocketRef, Data::<SnapshotRequestDto>(data)| async move {
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
                     let snapshot = {
@@ -687,9 +715,23 @@ fn on_connect(
 
     {
         let store = store.clone();
-        socket.on("stop_session", |socket: SocketRef, Data::<StopSessionData>(data)| async move {
+        socket.on("stop_session", |socket: SocketRef, Data::<StopSessionDto>(data)| async move {
             let session_id = data.id.clone();
+            let socket_key = socket.id.to_string();
             let mut store_lock = store.lock().await;
+            let caller_team = store_lock
+                .get(&session_id)
+                .and_then(|s| s.player_teams.get(&socket_key))
+                .copied();
+
+            if caller_team != Some(PlayerTeam::White) {
+                warn!(
+                    "stop_session denied: socket_id={} session_id={} caller_team={:?}",
+                    socket.id, session_id, caller_team
+                );
+                return;
+            }
+
             if let Some(mut session) = store_lock.remove(&session_id) {
                 if let Some(stop_tx) = session.stop_tx.take() {
                     let _ = stop_tx.send(());
@@ -705,13 +747,16 @@ fn on_connect(
                 // Invoke stub hook (left empty for now).
                 on_session_closed_stub(&public);
 
+                // Convert domain -> DTO at the socket boundary.
+                let public_dto = public.to_dto();
+
                 // Notify everyone in the session room that this game has stopped.
                 socket
                     .to(session_id.clone())
-                    .emit("session_stopped", public.clone())
+                    .emit("session_stopped", public_dto.clone())
                     .ok();
                 // Also notify the stopper explicitly (they may or may not be in the room).
-                socket.emit("session_stopped", public).ok();
+                socket.emit("session_stopped", public_dto).ok();
 
                 // Disconnect every socket in the session room (including the host who stopped).
                 // Intentional: full teardown; clients reconnect and re-enter flow via the lobby UI.

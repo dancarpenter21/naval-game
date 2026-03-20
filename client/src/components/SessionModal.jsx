@@ -241,8 +241,8 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
     });
   };
 
-  const handleJoinSession = (sessionId) => {
-    socket.emit('join_session', { id: sessionId });
+  const handleJoinSession = (sessionId, team) => {
+    socket.emit('join_session', { id: sessionId, team });
   };
 
   const modalClassName =
@@ -420,13 +420,29 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
                       <span className="session-info">
                         {s?.name ?? 'Unnamed'} ({sessionId ?? 'unknown'})
                       </span>
-                      <button
-                        className="btn-join"
-                        disabled={!sessionId}
-                        onClick={() => sessionId && handleJoinSession(sessionId)}
-                      >
-                        Join
-                      </button>
+                      <div className="join-team-buttons">
+                        <button
+                          disabled={!sessionId}
+                          className="btn-join"
+                          onClick={() => sessionId && handleJoinSession(sessionId, 'blue')}
+                        >
+                          Join Blue
+                        </button>
+                        <button
+                          className="btn-join"
+                          disabled={!sessionId}
+                          onClick={() => sessionId && handleJoinSession(sessionId, 'red')}
+                        >
+                          Join Red
+                        </button>
+                        <button
+                          className="btn-join"
+                          disabled={!sessionId}
+                          onClick={() => sessionId && handleJoinSession(sessionId, 'white')}
+                        >
+                          Join White Cell
+                        </button>
+                      </div>
                     </li>
                   );
                 })}

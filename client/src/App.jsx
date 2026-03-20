@@ -35,6 +35,7 @@ function App() {
 
   const handleStopGame = () => {
     if (!session?.id) return;
+    if (session?.player_team !== 'white') return;
     socket.emit('stop_session', { id: session.id });
   };
 
@@ -91,7 +92,7 @@ function App() {
                 className="menu-item danger"
                 type="button"
                 role="menuitem"
-                disabled={!session}
+                disabled={!session || session?.player_team !== 'white'}
                 onClick={handleStopGame}
               >
                 Stop game

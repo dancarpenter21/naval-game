@@ -1,6 +1,7 @@
 # Example scenario: one red surface unit vs one blue air unit.
 # Entity templates: config/entities/example-red-ship.yaml (frigate),
-#                   config/entities/example-blue-airplane.yaml (blue-airplane).
+#                   config/entities/example-blue-airplane.yaml (blue-airplane),
+#                   config/entities/example-blue-missile.yaml (blue-missile).
 name: "Example encounter"
 description: |
   A hostile surface combatant is operating near a friendly air asset.
@@ -20,4 +21,9 @@ blue_entities:
     lon_deg: -40.1
     hae_m: 2500.0
     heading_deg: 275.0
+  - id: blue-missile
+    lat_deg: 35.2
+    lon_deg: -40.4
+    hae_m: 1000.0
+    heading_deg: 280.0
 spawns: []

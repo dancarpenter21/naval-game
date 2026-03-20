@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::ecs::Allegiance;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayerTeamDto {
+    Blue,
+    Red,
+    White,
+}
+
 // Socket payload DTOs shared by server handlers and emitted events.
 
 #[derive(Debug, Clone, Serialize)]
@@ -22,14 +30,21 @@ pub struct WorldSnapshotDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionPublic {
+pub struct SessionPublicDto {
     pub id: String,
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SessionParticipantDto {
+    pub id: String,
+    pub name: String,
+    pub player_team: PlayerTeamDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionsListDto {
-    pub sessions: Vec<SessionPublic>,
+    pub sessions: Vec<SessionPublicDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,7 +69,7 @@ pub struct ScenariosListDto {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateSessionData {
+pub struct CreateSessionDto {
     pub name: String,
     /// Which scenario file (`stem` of `config/scenarios/<id>.yaml`). Defaults to first scenario if omitted.
     #[serde(default)]
@@ -62,17 +77,18 @@ pub struct CreateSessionData {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct JoinSessionData {
+pub struct JoinSessionDto {
+    pub id: String,
+    pub team: PlayerTeamDto,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StopSessionDto {
     pub id: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct StopSessionData {
-    pub id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SnapshotRequestData {
+pub struct SnapshotRequestDto {
     pub id: String,
 }
 

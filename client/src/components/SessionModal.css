@@ -171,6 +171,13 @@ a.modal-help-button:hover {
   color: #ddd;
 }
 
+.join-team-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .btn-join {
   background: #61dafb;
   color: #000;
