@@ -4,7 +4,6 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
-use crate::sidc::{status_from_sidc, Status};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComponentConfig {
@@ -119,6 +118,7 @@ fn try_parse_entities(content: &str) -> Result<Vec<EntityConfig>, Box<dyn Error>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sidc::{status_from_sidc, Status};
 
     /// Helper to get the absolute path to the default entities directory
     /// used by the server: `<crate root>/config/entities`.

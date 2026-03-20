@@ -1,1 +1,23 @@
+# Example scenario: one red surface unit vs one blue air unit.
+# Entity templates: config/entities/example-red-ship.yaml (frigate),
+#                   config/entities/example-blue-airplane.yaml (blue-airplane).
+name: "Example encounter"
+description: |
+  A hostile surface combatant is operating near a friendly air asset.
+  Use this scenario to exercise basic tracking and coordination between red and blue forces.
+win_conditions: |
+  Blue: maintain positive identification of the red unit and avoid engagement unless authorized.
+  Red: complete patrol box without being neutralized (placeholder objectives).
+red_entities:
+  - id: frigate
+    lat_deg: 34.8
+    lon_deg: -39.2
+    hae_m: 0.0
+    heading_deg: 95.0
+blue_entities:
+  - id: blue-airplane
+    lat_deg: 35.4
+    lon_deg: -40.1
+    hae_m: 2500.0
+    heading_deg: 275.0
 spawns: []

@@ -16,6 +16,26 @@ services:
     networks:
       - tess_net
 
+  # Full Rust test suite once, then exit (CI / local check).
+  #   docker compose --profile tests run --rm server-test
+  server-test:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    profiles:
+      - tests
+    volumes:
+      - ./server:/app
+      - cargo-registry:/usr/local/cargo/registry
+      - ./server/target:/app/target
+    environment:
+      - RUST_LOG=info
+    networks:
+      - tess_net
+    command: cargo test
+
+  # Watch mode: re-run the full suite on source changes.
+  #   docker compose --profile tests up server-tests
   server-tests:
     build:
       context: ./server
@@ -28,15 +48,11 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - ./server/target:/app/target
     environment:
-      # Debug per-tick logs require enabling DEBUG in RUST_LOG (currently set to `info`).
-      # RUST_LOG=naval_game_server=debug,info (or just RUST_LOG=debug if you’re ok with broader debug).
       - RUST_LOG=info
     networks:
       - tess_net
-    # Continuously watch and run tests, focusing on the ecs module.
-    # Adjust the 'test ecs' filter as needed for your test names.
     command: >
-      cargo watch -x "test ecs"
+      cargo watch -x "test"
 
   client:
     build:

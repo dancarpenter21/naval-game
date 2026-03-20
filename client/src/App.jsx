@@ -3,9 +3,11 @@ import io from 'socket.io-client';
 import Tabs, { Tab } from './components/Tabs';
 import MapView from './components/MapView';
 import SyncMatrixView from './components/SyncMatrixView';
+import PlanComparisonView from './components/PlanComparisonView';
+import SystemView from './components/SystemView';
 import SessionModal from './components/SessionModal';
 import './App.css';
-import { SOCKET_PATH, SOCKET_URL } from './config';
+import { SIDC_HELP_HREF, SOCKET_PATH, SOCKET_URL } from './config';
 
 const socket = SOCKET_URL
   ? io(SOCKET_URL, { path: SOCKET_PATH })
@@ -67,7 +69,7 @@ function App() {
               <a
                 className="menu-item menu-link"
                 role="menuitem"
-                href="/help/sidc.html"
+                href={SIDC_HELP_HREF}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => setMenuOpen(false)}
@@ -104,6 +106,12 @@ function App() {
         </Tab>
         <Tab label="Sync Matrix">
           <SyncMatrixView />
+        </Tab>
+        <Tab label="System View">
+          <SystemView />
+        </Tab>
+        <Tab label="Plan Comparison">
+          <PlanComparisonView />
         </Tab>
       </Tabs>
     </div>

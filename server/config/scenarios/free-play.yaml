@@ -1,0 +1,10 @@
+name: "Free play (all templates)"
+description: |
+  Spawns every entity defined in the world templates. Useful for sandboxing symbols,
+  movement, and UI without a tailored order of battle.
+win_conditions: |
+  None — experiment freely. End the session from the host when finished.
+# Empty lists + empty spawns → server spawns all entity templates (legacy default).
+red_entities: []
+blue_entities: []
+spawns: []

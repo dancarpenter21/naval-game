@@ -12,6 +12,22 @@ Most of the game takes place on the 2D map. There is also a page for unit descri
 
 This game is built on a client-server architecture. The game state is maintained on the server and the client is updated in real-time. The server is a Rust application built from a map with Turf.js for geometry calculations. The client is a web application built from a React.js application with a Node.js backend. The game itself is an entity component system where units are airframes, boats, etc, and entity has components that define its properties, capabilities, and behaviors.
 
+## Running tests (Rust server)
+
+Run the server unit tests **via Docker Compose** (same toolchain and cargo cache as dev):
+
+- **One shot** — full `cargo test`, then exit:
+
+  ```bash
+  docker compose --profile tests run --rm server-test
+  ```
+
+- **Watch mode** — re-run tests when `./server` sources change:
+
+  ```bash
+  docker compose --profile tests up server-tests
+  ```
+
 ## Deployment
 
 The game is deployed as Docker compose.yaml with containers for the server, the client dev server (Vite), and nginx as a reverse proxy. The **SIDC builder** is a static page shipped with the client at **`/sidc-picker/index.html`** (no separate sidc-picker container).

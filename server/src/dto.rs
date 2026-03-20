@@ -5,7 +5,7 @@ use crate::ecs::Allegiance;
 // Socket payload DTOs shared by server handlers and emitted events.
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ShipSnapshot {
+pub struct ShipSnapshotDto {
     pub id: String,
     pub name: String,
     pub allegiance: Allegiance,
@@ -18,7 +18,7 @@ pub struct ShipSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldSnapshotDto {
-    pub ships: Vec<ShipSnapshot>,
+    pub ships: Vec<ShipSnapshotDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,9 +32,33 @@ pub struct SessionsListDto {
     pub sessions: Vec<SessionPublic>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioSideEntityDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioSummaryDto {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub win_conditions: String,
+    pub red: Vec<ScenarioSideEntityDto>,
+    pub blue: Vec<ScenarioSideEntityDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenariosListDto {
+    pub scenarios: Vec<ScenarioSummaryDto>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionData {
     pub name: String,
+    /// Which scenario file (`stem` of `config/scenarios/<id>.yaml`). Defaults to first scenario if omitted.
+    #[serde(default)]
+    pub scenario_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,5 +74,10 @@ pub struct StopSessionData {
 #[derive(Debug, Deserialize)]
 pub struct SnapshotRequestData {
     pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorDto {
+    pub message: String,
 }
 
