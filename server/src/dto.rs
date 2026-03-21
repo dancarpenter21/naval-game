@@ -40,6 +40,35 @@ pub struct SessionParticipantDto {
     pub id: String,
     pub name: String,
     pub player_team: PlayerTeamDto,
+    /// Display name for this connection (OS user / env / client-provided).
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RoomPlayerDto {
+    pub socket_id: String,
+    pub display_name: String,
+    pub player_team: PlayerTeamDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlayersListDto {
+    pub players: Vec<RoomPlayerDto>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatScopeDto {
+    #[default]
+    All,
+    Team,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatMessageDto {
+    pub from: String,
+    pub text: String,
+    pub scope: ChatScopeDto,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,12 +103,17 @@ pub struct CreateSessionDto {
     /// Which scenario file (`stem` of `config/scenarios/<id>.yaml`). Defaults to first scenario if omitted.
     #[serde(default)]
     pub scenario_id: Option<String>,
+    /// Client display name (e.g. OS user via `VITE_PLAYER_NAME`).
+    #[serde(default)]
+    pub display_name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct JoinSessionDto {
     pub id: String,
     pub team: PlayerTeamDto,
+    #[serde(default)]
+    pub display_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,7 +122,25 @@ pub struct StopSessionDto {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LeaveSessionDto {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SnapshotRequestDto {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatSendDto {
+    pub session_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub scope: ChatScopeDto,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlayersListRequestDto {
     pub id: String,
 }
 

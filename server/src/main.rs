@@ -1,6 +1,7 @@
 use axum::routing::get;
 use socketioxide::{
     extract::{Data, SocketRef},
+    socket::DisconnectReason,
     SocketIo,
 };
 use tracing::{debug, info, warn};
@@ -22,11 +23,12 @@ mod sidc;
 use ecs::{Allegiance, EntityConfig, WorldTemplate};
 use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
-use domain::{PlayerTeam, ScenarioSideEntity, ScenarioSummary, SessionPublic};
+use domain::{participant_to_dto, PlayerTeam, ScenarioSideEntity, ScenarioSummary, SessionPublic};
 use dto::{
-    CreateSessionDto, ErrorDto, JoinSessionDto, PlayerTeamDto, ScenarioSummaryDto, ScenariosListDto,
-    SessionParticipantDto, ShipSnapshotDto, SnapshotRequestDto, SessionPublicDto,
-    SessionsListDto, ScenarioSideEntityDto, StopSessionDto, WorldSnapshotDto,
+    ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, JoinSessionDto,
+    LeaveSessionDto, PlayersListDto, PlayersListRequestDto, RoomPlayerDto, ScenariosListDto,
+    SessionPublicDto, SessionsListDto, ShipSnapshotDto, SnapshotRequestDto, StopSessionDto,
+    WorldSnapshotDto,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +88,7 @@ struct ShipState {
     symbol: SymbolConfig,
 }
 
+#[allow(dead_code)] // Reserved for future status / SIDC updates on entities
 impl ShipState {
     fn status(&self) -> Option<Status> {
         status_from_sidc(&self.symbol.sidc)
@@ -109,9 +112,41 @@ struct GameSession {
     public: SessionPublic,
     /// Team assignment per connected socket (keyed by `socket.id`).
     player_teams: HashMap<String, PlayerTeam>,
+    /// Display name per socket (chat / player list).
+    player_names: HashMap<String, String>,
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     _loop_handle: JoinHandle<()>,
     world: Arc<Mutex<Vec<ShipState>>>,
+}
+
+fn sanitize_display_name(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return "Player".to_string();
+    }
+    t.chars().take(48).collect()
+}
+
+fn players_list_for_session(session: &GameSession) -> PlayersListDto {
+    let mut players: Vec<RoomPlayerDto> = session
+        .player_teams
+        .iter()
+        .map(|(socket_id, team)| RoomPlayerDto {
+            socket_id: socket_id.clone(),
+            display_name: session
+                .player_names
+                .get(socket_id)
+                .cloned()
+                .unwrap_or_else(|| "Player".to_string()),
+            player_team: team.to_dto(),
+        })
+        .collect();
+    players.sort_by(|a, b| {
+        a.display_name
+            .to_lowercase()
+            .cmp(&b.display_name.to_lowercase())
+    });
+    PlayersListDto { players }
 }
 
 #[derive(Clone)]
@@ -547,15 +582,16 @@ fn on_connect(
             };
 
             let session_name = data.name;
+            let display_name = sanitize_display_name(&data.display_name);
             let public = SessionPublic {
                 id: id.clone(),
                 name: session_name.clone(),
             };
-            let participant = SessionParticipantDto {
-                id: id.clone(),
-                name: session_name,
-                player_team: PlayerTeam::White.to_dto(),
-            };
+            let participant = participant_to_dto(
+                &public,
+                PlayerTeam::White,
+                display_name.clone(),
+            );
 
             let ships = spawn_initial_ships(&world_template, scenario);
             let world = Arc::new(Mutex::new(ships));
@@ -581,16 +617,25 @@ fn on_connect(
             let world_for_session = world.clone();
             let mut player_teams = HashMap::new();
             // Session creator starts in the admin/white team.
-            player_teams.insert(socket.id.to_string(), PlayerTeam::White);
+            let sock_key = socket.id.to_string();
+            player_teams.insert(sock_key.clone(), PlayerTeam::White);
+            let mut player_names = HashMap::new();
+            player_names.insert(sock_key, display_name);
             let game_session = GameSession {
                 public: public.clone(),
                 player_teams,
+                player_names,
                 stop_tx: Some(stop_tx),
                 _loop_handle: loop_handle,
                 world: world_for_session,
             };
-            
+
             store.lock().await.insert(id.clone(), game_session);
+            let players_dto = {
+                let lock = store.lock().await;
+                players_list_for_session(lock.get(&id).expect("session inserted"))
+            };
+            io.to(id.clone()).emit("players_list", players_dto).ok();
             info!(
                 "Session created session_name={} session_id={} tick_count={}",
                 public.name,
@@ -634,45 +679,57 @@ fn on_connect(
 
     {
         let store = store.clone();
+        let io = io.clone();
         socket.on("join_session", |socket: SocketRef, Data::<JoinSessionDto>(data)| async move {
+            let session_id = data.id.clone();
             let mut store_lock = store.lock().await;
             if let Some(session) = store_lock.get_mut(&data.id) {
-                let player_team_dto = data.team;
-                let player_team = PlayerTeam::from_dto(player_team_dto);
-                session.player_teams.insert(socket.id.to_string(), player_team);
-                socket.join(data.id.clone());
-                let participant = SessionParticipantDto {
-                    id: session.public.id.clone(),
-                    name: session.public.name.clone(),
-                    player_team: player_team_dto,
-                };
+                let player_team = PlayerTeam::from_dto(data.team);
+                let display_name = sanitize_display_name(&data.display_name);
+                let sock_key = socket.id.to_string();
+                session
+                    .player_teams
+                    .insert(sock_key.clone(), player_team);
+                session.player_names.insert(sock_key, display_name.clone());
+                socket.join(session_id.clone());
+                let participant =
+                    participant_to_dto(&session.public, player_team, display_name.clone());
+                let session_name_for_log = session.public.name.clone();
+                let players_dto = players_list_for_session(session);
+                drop(store_lock);
+                io.to(session_id.clone())
+                    .emit("players_list", players_dto)
+                    .ok();
                 socket.emit("session_joined", participant).ok();
                 info!(
                     "User joined session user_socket_id={} session_name={} session_id={} tick_count={}",
                     socket.id,
-                    session.public.name,
+                    session_name_for_log,
                     data.id,
                     -1
                 );
 
                 // Send an immediate snapshot to the joiner.
-                let snapshot = {
-                    let guard = session.world.lock().await;
-                    guard
-                        .iter()
-                        .map(|s| ShipSnapshotDto {
-                            id: s.id.clone(),
-                            name: s.name.clone(),
-                            allegiance: s.allegiance.clone(),
-                            lat_deg: s.transform.lat_deg,
-                            lon_deg: s.transform.lon_deg,
-                            hae_m: s.transform.hae_m,
-                            heading_deg: s.transform.heading_deg,
-                            sidc: s.symbol.sidc.clone(),
-                        })
-                        .collect::<Vec<_>>()
-                };
-                socket.emit("world_snapshot", WorldSnapshotDto { ships: snapshot }).ok();
+                let store_lock = store.lock().await;
+                if let Some(session) = store_lock.get(&data.id) {
+                    let snapshot = {
+                        let guard = session.world.lock().await;
+                        guard
+                            .iter()
+                            .map(|s| ShipSnapshotDto {
+                                id: s.id.clone(),
+                                name: s.name.clone(),
+                                allegiance: s.allegiance.clone(),
+                                lat_deg: s.transform.lat_deg,
+                                lon_deg: s.transform.lon_deg,
+                                hae_m: s.transform.hae_m,
+                                heading_deg: s.transform.heading_deg,
+                                sidc: s.symbol.sidc.clone(),
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    socket.emit("world_snapshot", WorldSnapshotDto { ships: snapshot }).ok();
+                }
             }
         });
     }
@@ -764,6 +821,170 @@ fn on_connect(
                     .within(session_id)
                     .disconnect()
                     .ok();
+            }
+        });
+    }
+
+    {
+        let store = store.clone();
+        let io = io.clone();
+        socket.on("leave_session", |socket: SocketRef, Data::<LeaveSessionDto>(data)| async move {
+            let session_id = data.id.clone();
+            let sock_key = socket.id.to_string();
+            let mut store_lock = store.lock().await;
+            let Some(session) = store_lock.get_mut(&session_id) else {
+                return;
+            };
+            if !session.player_teams.contains_key(&sock_key) {
+                return;
+            }
+            session.player_teams.remove(&sock_key);
+            session.player_names.remove(&sock_key);
+            let has_white = session.player_teams.values().any(|t| *t == PlayerTeam::White);
+
+            if has_white {
+                let list = players_list_for_session(session);
+                socket.leave(session_id.clone()).ok();
+                drop(store_lock);
+                io.to(session_id).emit("players_list", list).ok();
+                socket.emit("left_session", ()).ok();
+            } else {
+                // Last white left — end game for everyone
+                drop(store_lock);
+                let mut sl = store.lock().await;
+                if let Some(mut session) = sl.remove(&session_id) {
+                    if let Some(stop_tx) = session.stop_tx.take() {
+                        let _ = stop_tx.send(());
+                    }
+                    let public_dto = session.public.to_dto();
+                    on_session_closed_stub(&session.public);
+                    drop(sl);
+                    io.to(session_id.clone())
+                        .emit("session_stopped", public_dto)
+                        .ok();
+                    io.within(session_id).disconnect().ok();
+                }
+            }
+        });
+    }
+
+    {
+        let store = store.clone();
+        socket.on(
+            "request_players_list",
+            |socket: SocketRef, Data::<PlayersListRequestDto>(data)| async move {
+                let sock_key = socket.id.to_string();
+                let store_lock = store.lock().await;
+                if let Some(session) = store_lock.get(&data.id) {
+                    if session.player_teams.contains_key(&sock_key) {
+                        let pl = players_list_for_session(session);
+                        socket.emit("players_list", pl).ok();
+                    }
+                }
+            },
+        );
+    }
+
+    {
+        let store = store.clone();
+        let io = io.clone();
+        socket.on("session_chat", |socket: SocketRef, Data::<ChatSendDto>(data)| async move {
+            let sock_key = socket.id.to_string();
+            let session_id = data.session_id.clone();
+            let text: String = data.text.trim().to_string();
+            if text.is_empty() || text.chars().count() > 2000 {
+                return;
+            }
+            let scope = data.scope;
+            let store_lock = store.lock().await;
+            let Some(session) = store_lock.get(&session_id) else {
+                return;
+            };
+            if !session.player_teams.contains_key(&sock_key) {
+                return;
+            }
+            let from = session
+                .player_names
+                .get(&sock_key)
+                .cloned()
+                .unwrap_or_else(|| "Player".to_string());
+            let sender_team = match session.player_teams.get(&sock_key) {
+                Some(t) => *t,
+                None => return,
+            };
+            let team_peer_ids: Vec<String> = session
+                .player_teams
+                .iter()
+                .filter(|(_, t)| **t == sender_team)
+                .map(|(id, _)| id.clone())
+                .collect();
+            drop(store_lock);
+
+            let msg = ChatMessageDto { from, text, scope };
+            match scope {
+                ChatScopeDto::All => {
+                    io.to(session_id).emit("chat_message", msg).ok();
+                }
+                ChatScopeDto::Team => {
+                    for peer_id in team_peer_ids {
+                        io.to(peer_id).emit("chat_message", msg.clone()).ok();
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let store = store.clone();
+        let io = io.clone();
+        socket.on_disconnect(|s: SocketRef, _reason: DisconnectReason| async move {
+            let sid = s.id.to_string();
+            let mut store_lock = store.lock().await;
+
+            enum PostDisconnect {
+                BroadcastList(String, PlayersListDto),
+                EndGame(String),
+            }
+            let mut post: Option<PostDisconnect> = None;
+
+            for (session_id, session) in store_lock.iter_mut() {
+                if session.player_teams.contains_key(&sid) {
+                    session.player_teams.remove(&sid);
+                    session.player_names.remove(&sid);
+                    let has_white = session.player_teams.values().any(|t| *t == PlayerTeam::White);
+                    post = Some(if has_white {
+                        PostDisconnect::BroadcastList(
+                            session_id.clone(),
+                            players_list_for_session(session),
+                        )
+                    } else {
+                        PostDisconnect::EndGame(session_id.clone())
+                    });
+                    break;
+                }
+            }
+            drop(store_lock);
+
+            match post {
+                Some(PostDisconnect::BroadcastList(session_id, list)) => {
+                    io.to(session_id).emit("players_list", list).ok();
+                }
+                Some(PostDisconnect::EndGame(session_id)) => {
+                    let mut sl = store.lock().await;
+                    if let Some(mut session) = sl.remove(&session_id) {
+                        if let Some(stop_tx) = session.stop_tx.take() {
+                            let _ = stop_tx.send(());
+                        }
+                        let public_dto = session.public.to_dto();
+                        on_session_closed_stub(&session.public);
+                        drop(sl);
+                        io.to(session_id.clone())
+                            .emit("session_stopped", public_dto)
+                            .ok();
+                        io.within(session_id).disconnect().ok();
+                    }
+                }
+                None => {}
             }
         });
     }

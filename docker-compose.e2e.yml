@@ -1,0 +1,6 @@
+# Merge with the main compose file so the Vite client runs without HMR (required for Cypress).
+#   docker compose -f docker-compose.yaml -f docker-compose.e2e.yml --profile e2e run --rm cypress
+services:
+  client:
+    environment:
+      VITE_DISABLE_HMR: 'true'

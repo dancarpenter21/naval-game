@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import './SessionModal.css';
 import { SIDC_HELP_HREF } from '../config';
+import {
+  getUsernameFromCookie,
+  setUsernameCookie,
+  validateUsername,
+} from '../playerIdentity';
+import { tryGetSmartCardDisplayName } from '../smartCardIdentity';
 import { z } from 'zod';
 
 const SessionDtoSchema = z.object({
@@ -44,6 +50,56 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
   const [selectedScenarioId, setSelectedScenarioId] = useState(null);
   const [scenariosLoadError, setScenariosLoadError] = useState(null);
   const [sessionCreateError, setSessionCreateError] = useState(null);
+
+  /** Display name for this browser — shared across create/join flows */
+  const [username, setUsername] = useState('');
+  /** Where the initial value came from (for cookie vs smart card rules) */
+  const [usernameOrigin, setUsernameOrigin] = useState(
+    /** @type {'none' | 'smartcard' | 'cookie' | 'manual'} */ ('none'),
+  );
+  const [usernameTouched, setUsernameTouched] = useState(false);
+  /** @type {'idle' | 'checking' | 'done'} */
+  const [smartCardProbe, setSmartCardProbe] = useState('checking');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSmartCardProbe('checking');
+      const fromCard = await tryGetSmartCardDisplayName();
+      if (cancelled) return;
+      if (fromCard && validateUsername(fromCard)) {
+        setUsername(fromCard);
+        setUsernameOrigin('smartcard');
+        setUsernameTouched(false);
+        setSmartCardProbe('done');
+        return;
+      }
+      const fromCookie = getUsernameFromCookie();
+      if (fromCookie && validateUsername(fromCookie)) {
+        setUsername(fromCookie);
+        setUsernameOrigin('cookie');
+        setUsernameTouched(false);
+      } else {
+        setUsername('');
+        setUsernameOrigin('none');
+      }
+      setSmartCardProbe('done');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const usernameOk = validateUsername(username);
+
+  const persistUsernameForSession = () => {
+    const trimmed = username.trim();
+    if (!validateUsername(trimmed)) return;
+    const onlySmartCard = usernameOrigin === 'smartcard' && !usernameTouched;
+    if (!onlySmartCard) {
+      setUsernameCookie(trimmed);
+    }
+  };
 
   useEffect(() => {
     if (view !== 'join_session' || !socket) {
@@ -111,13 +167,19 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
     };
 
     socket.on('sessions_list', handleSessionsList);
-    // After stop_session the server disconnects sockets in the room; on reconnect we must ask again.
+    // After stop_session the server disconnects sockets; reconnect must re-fetch lists.
     socket.on('connect', requestSessions);
-    requestSessions();
+    socket.io?.on?.('reconnect', requestSessions);
+    // If already connected, connect won't fire again; emit now + short retries (rare race after reconnect).
+    const sessionTimers = [0, 100, 300].map((ms) =>
+      setTimeout(() => requestSessions(), ms),
+    );
 
     return () => {
+      sessionTimers.forEach(clearTimeout);
       socket.off('sessions_list', handleSessionsList);
       socket.off('connect', requestSessions);
+      socket.io?.off?.('reconnect', requestSessions);
     };
   }, [view, socket]);
 
@@ -178,11 +240,18 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
 
     socket.on('scenarios_list', handleScenariosList);
     socket.on('connect', requestScenarios);
-    requestScenarios();
+    socket.io?.on?.('reconnect', requestScenarios);
+    // After server disconnect (stop_session), socket may already be connected when this view mounts;
+    // connect won't fire again. Stagger emits to avoid a rare lost first packet right after reconnect.
+    const scenarioTimers = [0, 50, 150, 400].map((ms) =>
+      setTimeout(() => requestScenarios(), ms),
+    );
 
     return () => {
+      scenarioTimers.forEach(clearTimeout);
       socket.off('scenarios_list', handleScenariosList);
       socket.off('connect', requestScenarios);
+      socket.io?.off?.('reconnect', requestScenarios);
     };
   }, [view, socket]);
 
@@ -233,16 +302,24 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
   }, [view, selectedScenarioId]);
 
   const handleInitializeOperation = () => {
-    if (sessionName.trim() === '' || !selectedScenarioId) return;
+    if (!usernameOk || sessionName.trim() === '' || !selectedScenarioId) return;
     setSessionCreateError(null);
+    persistUsernameForSession();
     socket.emit('create_session', {
       name: sessionName.trim(),
       scenario_id: selectedScenarioId,
+      display_name: username.trim(),
     });
   };
 
   const handleJoinSession = (sessionId, team) => {
-    socket.emit('join_session', { id: sessionId, team });
+    if (!usernameOk) return;
+    persistUsernameForSession();
+    socket.emit('join_session', {
+      id: sessionId,
+      team,
+      display_name: username.trim(),
+    });
   };
 
   const modalClassName =
@@ -256,10 +333,47 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
         {view === 'initial' && (
           <>
             <h2>Naval Game</h2>
-            <p>Welcome to the tactical operations center.</p>
+            <div className="modal-username">
+              <label className="modal-username__label" htmlFor="session-username">
+                Username
+              </label>
+              <input
+                id="session-username"
+                data-testid="session-username-input"
+                className="modal-username__input"
+                type="text"
+                autoComplete="username"
+                maxLength={48}
+                placeholder=""
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setUsernameTouched(true);
+                  setUsernameOrigin('manual');
+                }}
+                aria-invalid={username.length > 0 && !usernameOk}
+              />
+              <p className="modal-username__hint" role="status">
+                {smartCardProbe === 'checking'
+                  ? 'Checking for smart card…'
+                  : usernameOrigin === 'smartcard'
+                    ? 'Loaded from smart card (overrides saved name).'
+                    : usernameOrigin === 'cookie'
+                      ? 'Restored from your saved name. Edit if needed.'
+                      : 'Enter your username to continue. Your name is saved in this browser when you create or join a session (unless loaded from a smart card).'}
+              </p>
+              {username.length > 0 && !usernameOk && (
+                <p className="modal-username__error" role="alert">
+                  Use 2–48 characters: letters, numbers, spaces, and _ . &apos; -
+                </p>
+              )}
+            </div>
             <div className="modal-buttons">
               <button
+                type="button"
+                data-testid="session-start-new"
                 className="btn btn-primary"
+                disabled={!usernameOk}
                 onClick={() => {
                   setSessionCreateError(null);
                   setSessionName('');
@@ -268,12 +382,19 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
               >
                 Start a New Session
               </button>
-              <button className="btn btn-secondary" onClick={() => setView('join_session')}>
+              <button
+                type="button"
+                data-testid="session-join"
+                className="btn btn-secondary"
+                disabled={!usernameOk}
+                onClick={() => setView('join_session')}
+              >
                 Join a Session
               </button>
             </div>
             <a
               className="modal-help-button"
+              data-testid="session-help-link"
               href={SIDC_HELP_HREF}
               target="_blank"
               rel="noopener noreferrer"
@@ -290,6 +411,7 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
               <label htmlFor="session-operation-name">Session name</label>
               <input
                 id="session-operation-name"
+                data-testid="scenario-session-name-input"
                 type="text"
                 placeholder="Filled automatically when you pick a scenario"
                 value={sessionName}
@@ -313,13 +435,22 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
               <div className="scenario-picker__list-wrap">
                 <h3 className="scenario-picker__subhead">Scenarios</h3>
                 {scenarios.length === 0 && !scenariosLoadError ? (
-                  <p className="scenario-picker__placeholder">Loading scenarios…</p>
+                  <p className="scenario-picker__placeholder" data-testid="scenario-loading">
+                    Loading scenarios…
+                  </p>
                 ) : (
-                  <ul className="scenario-list" role="listbox" aria-label="Scenarios">
+                  <ul
+                    className="scenario-list"
+                    role="listbox"
+                    aria-label="Scenarios"
+                    data-testid="scenario-list"
+                  >
                     {scenarios.map((s) => (
                       <li key={s.id}>
                         <button
                           type="button"
+                          data-testid="scenario-option"
+                          data-scenario-id={s.id}
                           className={
                             s.id === selectedScenarioId
                               ? 'scenario-list__item scenario-list__item--active'
@@ -382,9 +513,14 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
 
             <div className="modal-buttons modal-buttons--row">
               <button
+                type="button"
+                data-testid="scenario-initialize"
                 className="btn btn-primary"
                 disabled={
-                  sessionName.trim() === '' || !selectedScenarioId || scenarios.length === 0
+                  !usernameOk ||
+                  sessionName.trim() === '' ||
+                  !selectedScenarioId ||
+                  scenarios.length === 0
                 }
                 onClick={handleInitializeOperation}
               >
@@ -392,6 +528,8 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
               </button>
             </div>
             <button
+              type="button"
+              data-testid="session-back-from-scenario"
               className="btn btn-back"
               onClick={() => {
                 setView('initial');
@@ -422,22 +560,28 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
                       </span>
                       <div className="join-team-buttons">
                         <button
-                          disabled={!sessionId}
+                          type="button"
+                          data-testid="session-join-blue"
+                          disabled={!sessionId || !usernameOk}
                           className="btn-join"
                           onClick={() => sessionId && handleJoinSession(sessionId, 'blue')}
                         >
                           Join Blue
                         </button>
                         <button
+                          type="button"
+                          data-testid="session-join-red"
                           className="btn-join"
-                          disabled={!sessionId}
+                          disabled={!sessionId || !usernameOk}
                           onClick={() => sessionId && handleJoinSession(sessionId, 'red')}
                         >
                           Join Red
                         </button>
                         <button
+                          type="button"
+                          data-testid="session-join-white"
                           className="btn-join"
-                          disabled={!sessionId}
+                          disabled={!sessionId || !usernameOk}
                           onClick={() => sessionId && handleJoinSession(sessionId, 'white')}
                         >
                           Join White Cell
@@ -448,7 +592,12 @@ const SessionModal = ({ socket, onSessionEstablished }) => {
                 })}
               </ul>
             )}
-            <button className="btn btn-back" onClick={() => setView('initial')}>
+            <button
+              type="button"
+              data-testid="session-back-from-join"
+              className="btn btn-back"
+              onClick={() => setView('initial')}
+            >
               &larr; Back
             </button>
           </>

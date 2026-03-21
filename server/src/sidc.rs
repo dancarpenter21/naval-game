@@ -3,6 +3,8 @@
 // and specifically its `src/symbology/sidc.js` and `src/symbology/values.js`.
 // This file contains a Rust adaptation for server-side use.
 
+#![allow(dead_code)] // Parsers/helpers mirror JS reference; not all are wired into the game yet.
+
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use std::fmt;

@@ -84,11 +84,13 @@ impl ScenarioSummary {
 pub fn participant_to_dto(
     public: &SessionPublic,
     player_team: PlayerTeam,
+    display_name: String,
 ) -> SessionParticipantDto {
     SessionParticipantDto {
         id: public.id.clone(),
         name: public.name.clone(),
         player_team: player_team.to_dto(),
+        display_name,
     }
 }
 

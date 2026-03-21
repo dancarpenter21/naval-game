@@ -1,0 +1,26 @@
+# Cypress E2E — no Node/Cypress on the runner host; only Docker.
+name: E2E (Cypress)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cypress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Cypress via Docker Compose
+        run: docker compose -f docker-compose.yaml -f docker-compose.e2e.yml --profile e2e run --rm cypress
+
+      - name: Upload Cypress screenshots (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: client/cypress/screenshots
+          if-no-files-found: ignore

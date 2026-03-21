@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Cypress (Docker E2E)
+cypress/screenshots
+cypress/videos
+cypress/downloads

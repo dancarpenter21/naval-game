@@ -28,6 +28,33 @@ Run the server unit tests **via Docker Compose** (same toolchain and cargo cache
   docker compose --profile tests up server-tests
   ```
 
+## E2E UI tests (Cypress, Docker only)
+
+Cypress is **not** installed on the host. The **`cypress/included`** image runs tests against the same stack as dev (`nginx` → Vite + Rust server).
+
+Cypress loads **`http://nginx`**, while Vite’s default HMR WebSocket targets **`localhost:8080`**, which fails in headless E2E. Use the **`docker-compose.e2e.yml`** override so **`VITE_DISABLE_HMR=true`** on the client (no HMR during the run).
+
+- **Run Cypress** (merge both compose files):
+
+  ```bash
+  docker compose -f docker-compose.yaml -f docker-compose.e2e.yml --profile e2e run --rm cypress
+  ```
+
+- If you already had the stack up **without** the E2E override, recreate the client so Vite picks up the env:
+
+  ```bash
+  docker compose -f docker-compose.yaml -f docker-compose.e2e.yml up -d --force-recreate client nginx
+  docker compose -f docker-compose.yaml -f docker-compose.e2e.yml --profile e2e run --rm cypress
+  ```
+
+Specs live in **`client/cypress/e2e/`**. Config: **`client/cypress.config.js`**. **`CYPRESS_baseUrl`** is set to **`http://nginx`** inside Compose.
+
+GitHub Actions: **`.github/workflows/e2e.yml`** uses the same two `-f` files (no host install).
+
+## Player name (chat & session roster)
+
+Enter a **username** on the session screen before creating or joining a game. The app stores a manual name in the cookie **`naval_player_username`** (SameSite=Lax). If the [Web Smart Card API](https://wicg.github.io/web-smart-card/) is available and a PIV-compatible card is present, the **common name (CN)** from the on-card X.509 certificate is filled in automatically and **overrides** the cookie for that visit. For automated tests / dev without a reader, set **`VITE_TEST_SMARTCARD_NAME`**. Legacy fallbacks: build-time **`VITE_PLAYER_NAME`**, then **`localStorage.naval_player_display_name`** (older builds).
+
 ## Deployment
 
 The game is deployed as Docker compose.yaml with containers for the server, the client dev server (Vite), and nginx as a reverse proxy. The **SIDC builder** is a static page shipped with the client at **`/sidc-picker/index.html`** (no separate sidc-picker container).

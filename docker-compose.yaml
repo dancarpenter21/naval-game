@@ -70,6 +70,22 @@ services:
       - VITE_HMR_HOST=localhost
       - VITE_HMR_CLIENT_PORT=8080
       - VITE_APP_AUTO_OPEN=false
+      # Shown as player name in chat / player list (browsers cannot read OS login); defaults to shell USER when set here.
+      - VITE_PLAYER_NAME=${USER:-player}
+      # Set true for Cypress E2E (see docker-compose.e2e.yml) — avoids Vite HMR ws to localhost when visiting http://nginx
+      - VITE_DISABLE_HMR=${VITE_DISABLE_HMR:-false}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:5173/',{headers:{Host:'client'}},(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
     networks:
       - tess_net
 
@@ -80,14 +96,35 @@ services:
     volumes:
       - ./proxy/nginx.conf.template:/etc/nginx/nginx.conf.template
     depends_on:
-      - client
-      - server
+      client:
+        condition: service_healthy
+      server:
+        condition: service_started
     networks:
       - tess_net
     environment:
       - HOST_HOSTNAME=${HOSTNAME}
     command: >
       /bin/sh -c "envsubst '$$HOST_HOSTNAME' < /etc/nginx/nginx.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+
+  # E2E UI tests (Cypress) — nothing installed on the host; image bundles Cypress.
+  #   docker compose --profile e2e up -d nginx
+  #   docker compose --profile e2e run --rm cypress
+  # Or CI: see .github/workflows/e2e.yml
+  cypress:
+    image: cypress/included:14.3.2
+    profiles:
+      - e2e
+    depends_on:
+      - nginx
+    networks:
+      - tess_net
+    working_dir: /app
+    volumes:
+      - ./client:/app
+    environment:
+      - CYPRESS_baseUrl=http://nginx
+    entrypoint: ["/bin/sh", "/app/scripts/docker-e2e.sh"]
 
 volumes:
   cargo-registry:

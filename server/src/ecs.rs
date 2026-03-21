@@ -29,6 +29,7 @@ pub enum Allegiance {
 }
 
 impl Allegiance {
+    #[allow(dead_code)] // For future serialization / API use
     pub fn as_str(&self) -> &'static str {
         match self {
             Allegiance::Hostile => "hostile",

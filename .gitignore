@@ -1,5 +1,52 @@
-node_modules
-dist
+# --- Dependencies & build output ---
+node_modules/
+dist/
+dist-ssr/
+build/
+
+# --- Environment & secrets ---
+# Keep templates tracked: .env.example, etc.
 .env
+.env.*
+!.env.example
+!**/.env.example
+!.env.sample
+!**/.env.sample
+
+# --- OS ---
 .DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Editor & IDE ---
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Tests & coverage ---
+coverage/
+.nyc_output/
+*.lcov
+
+# --- Cypress (Docker / local runs) ---
+client/cypress/screenshots/
+client/cypress/videos/
+client/cypress/downloads/
+
+# --- Rust (server) ---
+server/target/
+server/debug/
+
+# --- Caches ---
+.cache/
+**/.vite/
+.parcel-cache/
+
+# --- Project-specific ---
 .docker-config/
