@@ -1,0 +1,18 @@
+# Server unit tests + client lint/build — same as ./scripts/docker-tests.sh (no host Rust/Node).
+name: Tests (Docker)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  docker-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Server + client checks via Docker Compose
+        run: sh ./scripts/docker-tests.sh
