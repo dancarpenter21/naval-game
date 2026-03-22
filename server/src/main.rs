@@ -20,6 +20,7 @@ mod ecs;
 mod domain;
 mod scenario;
 mod sidc;
+mod sim_timing;
 use ecs::{Allegiance, EntityConfig, WorldTemplate};
 use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
@@ -27,8 +28,12 @@ use domain::{participant_to_dto, PlayerTeam, ScenarioSideEntity, ScenarioSummary
 use dto::{
     ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, JoinSessionDto,
     LeaveSessionDto, PlayersListDto, PlayersListRequestDto, RoomPlayerDto, ScenariosListDto,
-    SessionPublicDto, SessionsListDto, ShipSnapshotDto, SnapshotRequestDto, StopSessionDto,
-    WorldSnapshotDto,
+    SessionPublicDto, SessionsListDto, SetTimeScaleDto, ShipSnapshotDto, SnapshotRequestDto,
+    StopSessionDto,
+};
+use sim_timing::{
+    SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S,
+    METERS_PER_DEGREE_LAT_MEAN,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,6 +113,44 @@ fn on_session_closed_stub(_public: &SessionPublic) {
     // Intentionally left empty for now.
 }
 
+fn ship_snapshots_from_world(guard: &[ShipState]) -> Vec<ShipSnapshotDto> {
+    guard
+        .iter()
+        .map(|s| ShipSnapshotDto {
+            id: s.id.clone(),
+            name: s.name.clone(),
+            allegiance: s.allegiance.clone(),
+            lat_deg: s.transform.lat_deg,
+            lon_deg: s.transform.lon_deg,
+            hae_m: s.transform.hae_m,
+            heading_deg: s.transform.heading_deg,
+            sidc: s.symbol.sidc.clone(),
+        })
+        .collect()
+}
+
+/// Integrate simple kinematics for `dt_sim_s` (simulated seconds, not wall time).
+fn integrate_ships(world: &mut [ShipState], dt_sim_s: f64) {
+    if dt_sim_s <= 0.0 {
+        return;
+    }
+    for ship in world.iter_mut() {
+        let speed_mps = ship.movement.max_speed_knots * KNOTS_TO_MPS;
+        let dist_m = speed_mps * dt_sim_s;
+
+        let heading_rad = ship.transform.heading_deg.to_radians();
+        // Heading 0° = north, 90° = east
+        let north_m = dist_m * heading_rad.cos();
+        let east_m = dist_m * heading_rad.sin();
+
+        let lat_rad = ship.transform.lat_deg.to_radians();
+        let meters_per_deg_lon = METERS_PER_DEGREE_LAT_MEAN * lat_rad.cos().max(1e-6);
+
+        ship.transform.lat_deg += north_m / METERS_PER_DEGREE_LAT_MEAN;
+        ship.transform.lon_deg += east_m / meters_per_deg_lon;
+    }
+}
+
 struct GameSession {
     public: SessionPublic,
     /// Team assignment per connected socket (keyed by `socket.id`).
@@ -117,6 +160,8 @@ struct GameSession {
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     _loop_handle: JoinHandle<()>,
     world: Arc<Mutex<Vec<ShipState>>>,
+    /// Authoritative simulation clock + time scale (white cell adjusts scale via socket).
+    timing: Arc<Mutex<SimTimingState>>,
 }
 
 fn sanitize_display_name(raw: &str) -> String {
@@ -376,7 +421,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sessions_store: Arc<Mutex<HashMap<String, GameSession>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    
+
+    let sim_wall_clock = Arc::new(SimWallClockConfig::from_env());
+    info!(
+        "Simulation wall clock {}={} Hz (wall_dt_s={:.6})",
+        sim_timing::ENV_SIM_TICK_HZ,
+        sim_wall_clock.hz,
+        sim_wall_clock.dt_s
+    );
+
     let (layer, io) = SocketIo::new_layer();
 
     {
@@ -385,6 +438,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let io_for_handlers = io.clone();
         let world_template = world_template.clone();
         let scenario_catalog = scenario_catalog.clone();
+        let sim_wall_for_socket = sim_wall_clock.clone();
         io_for_ns.ns("/", move |socket: SocketRef| {
             on_connect(
                 socket,
@@ -392,6 +446,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 io_for_handlers.clone(),
                 world_template.clone(),
                 scenario_catalog.clone(),
+                sim_wall_for_socket.clone(),
             )
         });
     }
@@ -423,13 +478,15 @@ fn spawn_game_loop(
     session_id: String,
     session_name: String,
     world: Arc<Mutex<Vec<ShipState>>>,
+    timing: Arc<Mutex<SimTimingState>>,
     io: SocketIo,
+    wall_tick: Duration,
 ) -> (JoinHandle<()>, tokio::sync::oneshot::Sender<()>) {
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
-        let mut ticker = time::interval(Duration::from_millis(250));
-        let dt_s = 0.25_f64;
+        let mut ticker = time::interval(wall_tick);
+        ticker.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
         let mut tick_count: u64 = 0;
         loop {
             tokio::select! {
@@ -444,62 +501,57 @@ fn spawn_game_loop(
                 }
                 _ = ticker.tick() => {
                     tick_count += 1;
-                    let snapshot = {
+
+                    let (wall_dt_s, scale) = {
+                        let t = timing.lock().await;
+                        (t.wall_dt_s, SimTimingState::clamp_time_scale(t.time_scale))
+                    };
+                    let sim_advance_s = wall_dt_s * scale;
+
+                    let ships_dto = {
                         let mut guard = world.lock().await;
-                        for ship in guard.iter_mut() {
-                            // Very rough kinematics: move along heading at max speed.
-                            // 1 knot = 0.514444 m/s
-                            let speed_mps = ship.movement.max_speed_knots * 0.514_444;
-                            let dist_m = speed_mps * dt_s;
-
-                            let heading_rad = ship.transform.heading_deg.to_radians();
-                            // heading 0° = north, 90° = east
-                            let north_m = dist_m * heading_rad.cos();
-                            let east_m = dist_m * heading_rad.sin();
-
-                            let meters_per_deg_lat = 111_320.0_f64;
-                            let lat_rad = ship.transform.lat_deg.to_radians();
-                            let meters_per_deg_lon = meters_per_deg_lat * lat_rad.cos().max(1e-6);
-
-                            ship.transform.lat_deg += north_m / meters_per_deg_lat;
-                            ship.transform.lon_deg += east_m / meters_per_deg_lon;
-                            // Keep `hae_m` from spawn (e.g. air units); do not force sea level each tick.
+                        let mut remaining = sim_advance_s;
+                        while remaining > 1e-9 {
+                            let step = remaining.min(MAX_SIM_SUBSTEP_S);
+                            integrate_ships(&mut guard, step);
+                            remaining -= step;
                         }
-
-                        guard
-                            .iter()
-                            .map(|s| ShipSnapshotDto {
-                                id: s.id.clone(),
-                                name: s.name.clone(),
-                                allegiance: s.allegiance.clone(),
-                                lat_deg: s.transform.lat_deg,
-                                lon_deg: s.transform.lon_deg,
-                                hae_m: s.transform.hae_m,
-                                heading_deg: s.transform.heading_deg,
-                                sidc: s.symbol.sidc.clone(),
-                            })
-                            .collect::<Vec<_>>()
+                        ship_snapshots_from_world(&guard)
                     };
 
+                    let dto = {
+                        let mut t = timing.lock().await;
+                        t.sim_elapsed_s += sim_advance_s;
+                        t.to_world_snapshot(ships_dto)
+                    };
+
+                    let sim_elapsed_log = dto.sim_elapsed_s;
+                    let time_scale_log = dto.time_scale;
+                    let ship_count_log = dto.ships.len();
+
                     debug!(
-                        "Game tick: session_name={} session_id={} tick_count={} emitting world_snapshot ships={}",
+                        "Game tick: session_name={} session_id={} tick_count={} emitting world_snapshot ships={} sim_elapsed_s={:.2} time_scale={:.2}",
                         session_name,
                         session_id,
                         tick_count,
-                        snapshot.len()
+                        ship_count_log,
+                        sim_elapsed_log,
+                        time_scale_log
                     );
                     io.to(session_id.clone())
-                        .emit("world_snapshot", WorldSnapshotDto { ships: snapshot })
+                        .emit("world_snapshot", dto)
                         .ok();
 
-                    if tick_count % 20 == 0 {
+                    if tick_count % 64 == 0 {
                         let count = world.lock().await.len();
                         info!(
-                            "Game tick: session_name={} session_id={} tick_count={} ships={}",
+                            "Game tick: session_name={} session_id={} tick_count={} ships={} sim_elapsed_s={:.1} time_scale={:.1}",
                             session_name,
                             session_id,
                             tick_count,
-                            count
+                            count,
+                            sim_elapsed_log,
+                            time_scale_log
                         );
                     }
                 }
@@ -516,6 +568,7 @@ fn on_connect(
     io: SocketIo,
     world_template: Arc<WorldTemplate>,
     scenario_catalog: Arc<ScenarioCatalog>,
+    sim_wall: Arc<SimWallClockConfig>,
 ) {
     info!(
         "A user connected socket_id={} session_name={} session_id={} tick_count={}",
@@ -530,6 +583,7 @@ fn on_connect(
         let io = io.clone();
         let world_template = world_template.clone();
         let scenario_catalog = scenario_catalog.clone();
+        let sim_wall_create = sim_wall.clone();
         socket.on("create_session", |socket: SocketRef, Data::<CreateSessionDto>(data)| async move {
             let id = uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>();
 
@@ -608,11 +662,16 @@ fn on_connect(
                 );
             }
 
+            let wall_dt_s = sim_wall_create.dt_s;
+            let wall_tick = Duration::from_secs_f64(wall_dt_s);
+            let timing = Arc::new(Mutex::new(SimTimingState::new_now(wall_dt_s)));
             let (loop_handle, stop_tx) = spawn_game_loop(
                 public.id.clone(),
                 public.name.clone(),
                 world.clone(),
+                timing.clone(),
                 io.clone(),
+                wall_tick,
             );
             let world_for_session = world.clone();
             let mut player_teams = HashMap::new();
@@ -628,6 +687,7 @@ fn on_connect(
                 stop_tx: Some(stop_tx),
                 _loop_handle: loop_handle,
                 world: world_for_session,
+                timing,
             };
 
             store.lock().await.insert(id.clone(), game_session);
@@ -712,23 +772,15 @@ fn on_connect(
                 // Send an immediate snapshot to the joiner.
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
-                    let snapshot = {
+                    let ships = {
                         let guard = session.world.lock().await;
-                        guard
-                            .iter()
-                            .map(|s| ShipSnapshotDto {
-                                id: s.id.clone(),
-                                name: s.name.clone(),
-                                allegiance: s.allegiance.clone(),
-                                lat_deg: s.transform.lat_deg,
-                                lon_deg: s.transform.lon_deg,
-                                hae_m: s.transform.hae_m,
-                                heading_deg: s.transform.heading_deg,
-                                sidc: s.symbol.sidc.clone(),
-                            })
-                            .collect::<Vec<_>>()
+                        ship_snapshots_from_world(&guard)
                     };
-                    socket.emit("world_snapshot", WorldSnapshotDto { ships: snapshot }).ok();
+                    let dto = {
+                        let t = session.timing.lock().await;
+                        t.to_world_snapshot(ships)
+                    };
+                    socket.emit("world_snapshot", dto).ok();
                 }
             }
         });
@@ -741,31 +793,55 @@ fn on_connect(
             |socket: SocketRef, Data::<SnapshotRequestDto>(data)| async move {
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
-                    let snapshot = {
+                    let ships = {
                         let guard = session.world.lock().await;
-                        guard
-                            .iter()
-                            .map(|s| ShipSnapshotDto {
-                                id: s.id.clone(),
-                                name: s.name.clone(),
-                                allegiance: s.allegiance.clone(),
-                                lat_deg: s.transform.lat_deg,
-                                lon_deg: s.transform.lon_deg,
-                                hae_m: s.transform.hae_m,
-                                heading_deg: s.transform.heading_deg,
-                                sidc: s.symbol.sidc.clone(),
-                            })
-                            .collect::<Vec<_>>()
+                        ship_snapshots_from_world(&guard)
+                    };
+                    let dto = {
+                        let t = session.timing.lock().await;
+                        t.to_world_snapshot(ships)
                     };
                     info!(
                         "Sending requested world_snapshot session_name={} session_id={} tick_count={} ships={}",
                         session.public.name,
                         data.id,
                         -1,
-                        snapshot.len()
+                        dto.ships.len()
                     );
-                    socket.emit("world_snapshot", WorldSnapshotDto { ships: snapshot }).ok();
+                    socket.emit("world_snapshot", dto).ok();
                 }
+            },
+        );
+    }
+
+    {
+        let store = store.clone();
+        socket.on(
+            "set_time_scale",
+            |socket: SocketRef, Data::<SetTimeScaleDto>(data)| async move {
+                let socket_key = socket.id.to_string();
+                let session_id = data.session_id.clone();
+                let store_lock = store.lock().await;
+                let Some(session) = store_lock.get(&session_id) else {
+                    return;
+                };
+                let caller_team = session.player_teams.get(&socket_key).copied();
+                if caller_team != Some(PlayerTeam::White) {
+                    warn!(
+                        "set_time_scale denied: socket_id={} session_id={} caller_team={:?}",
+                        socket.id, session_id, caller_team
+                    );
+                    return;
+                }
+                let clamped = SimTimingState::clamp_time_scale(data.time_scale);
+                {
+                    let mut t = session.timing.lock().await;
+                    t.time_scale = clamped;
+                }
+                info!(
+                    "set_time_scale session_id={} time_scale={:.2} (clamped)",
+                    session_id, clamped
+                );
             },
         );
     }

@@ -27,6 +27,14 @@ pub struct ShipSnapshotDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldSnapshotDto {
     pub ships: Vec<ShipSnapshotDto>,
+    /// Simulated seconds since session start (server authority).
+    pub sim_elapsed_s: f64,
+    /// Exercise clock UTC (session start + sim_elapsed).
+    pub sim_time_utc: String,
+    /// Wall seconds between server ticks.
+    pub wall_dt_s: f64,
+    /// Sim seconds per wall second (1 = real time; max 64×).
+    pub time_scale: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +137,12 @@ pub struct LeaveSessionDto {
 #[derive(Debug, Deserialize)]
 pub struct SnapshotRequestDto {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetTimeScaleDto {
+    pub session_id: String,
+    pub time_scale: f64,
 }
 
 #[derive(Debug, Deserialize)]

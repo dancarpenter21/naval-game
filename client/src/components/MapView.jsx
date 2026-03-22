@@ -107,6 +107,10 @@ const ShipDtoSchema = z.object({
 // We'll validate each element separately so malformed ships don't break rendering.
 const WorldSnapshotDtoShapeSchema = z.object({
   ships: z.array(z.unknown()),
+  sim_elapsed_s: z.number().optional(),
+  sim_time_utc: z.string().optional(),
+  wall_dt_s: z.number().optional(),
+  time_scale: z.number().optional(),
 });
 
 const MapView = ({ socket, session }) => {

@@ -38,3 +38,11 @@
   - Build and start the client container.
 
   You can then access the game via the HTTP endpoint exposed by the `nginx` service (see the root `README.md` and `docker-compose.yaml` for details).
+
+### Simulation timing (server authority)
+
+- **Wall-clock tick rate** is set with **`SIM_TICK_HZ`** (simulation ticks per second). Default is **16** Hz (`2^4`, `wall_dt_s = 1/16` s). Valid range is **1–64** Hz (`2^0`–`2^6`); invalid or missing values fall back to the default. (This is not tied to Shannon/Nyquist sampling—it’s a practical CPU/network cap on how often the server steps the sim and emits snapshots.)
+- Each tick advances **simulation time** by `wall_dt_s × time_scale`. **White cell** players set `time_scale` between **⅛×** (`2^-3`) and **64×** (`2^6`) via the `set_time_scale` socket event.
+- Ship kinematics integrate in **substeps** of at most `MAX_SIM_SUBSTEP_S` simulated seconds so high time scales do not skip distance in one leap.
+- `WorldSnapshotDto` includes `sim_elapsed_s`, `sim_time_utc` (exercise clock), `wall_dt_s`, and `time_scale` for UI sync.
+- Speed uses SI **knots → m/s** as 1852/3600 (international nautical mile definition).

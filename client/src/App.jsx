@@ -3,6 +3,7 @@ import io from 'socket.io-client';
 import Tabs, { Tab } from './components/Tabs';
 import MapView from './components/MapView';
 import TeamBadge from './components/TeamBadge';
+import SimulationSpeedDial from './components/SimulationSpeedDial';
 import SessionChatPanel from './components/SessionChatPanel';
 import SyncMatrixView from './components/SyncMatrixView';
 import PlanComparisonView from './components/PlanComparisonView';
@@ -20,6 +21,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [players, setPlayers] = useState([]);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [simTiming, setSimTiming] = useState(null);
 
   const handleSessionEstablished = useCallback((sessionData) => {
     setSession(sessionData);
@@ -34,16 +36,40 @@ function App() {
   }, [session]);
 
   useEffect(() => {
+    if (!session) setSimTiming(null);
+  }, [session]);
+
+  /** Server timing fields on every `world_snapshot` (all tabs, not only Map). */
+  useEffect(() => {
+    if (!session?.id) return undefined;
+    const handleWorldSnapshot = (snapshot) => {
+      const o = Array.isArray(snapshot) || snapshot == null ? null : snapshot;
+      if (!o || typeof o !== 'object') return;
+      if (typeof o.time_scale !== 'number' && typeof o.sim_elapsed_s !== 'number') return;
+      setSimTiming({
+        sim_elapsed_s: typeof o.sim_elapsed_s === 'number' ? o.sim_elapsed_s : 0,
+        sim_time_utc: typeof o.sim_time_utc === 'string' ? o.sim_time_utc : null,
+        wall_dt_s: typeof o.wall_dt_s === 'number' ? o.wall_dt_s : null,
+        time_scale: typeof o.time_scale === 'number' ? o.time_scale : 1,
+      });
+    };
+    socket.on('world_snapshot', handleWorldSnapshot);
+    return () => socket.off('world_snapshot', handleWorldSnapshot);
+  }, [session?.id]);
+
+  useEffect(() => {
     const handleSessionStopped = () => {
       setMenuOpen(false);
       setSession(null);
       setPlayers([]);
+      setSimTiming(null);
       setLeaveConfirmOpen(false);
     };
     const handleLeftSession = () => {
       setMenuOpen(false);
       setSession(null);
       setPlayers([]);
+      setSimTiming(null);
       setLeaveConfirmOpen(false);
     };
 
@@ -80,6 +106,7 @@ function App() {
     socket.emit('leave_session', { id: session.id });
     setMenuOpen(false);
     setSession(null);
+    setSimTiming(null);
     setLeaveConfirmOpen(false);
   };
 
@@ -190,7 +217,10 @@ function App() {
       <Tabs
         contentOverlay={
           <>
-            <TeamBadge session={session} />
+            <div className="session-top-overlay">
+              <TeamBadge session={session} />
+              <SimulationSpeedDial socket={socket} session={session} simTiming={simTiming} />
+            </div>
             <SessionChatPanel socket={socket} session={session} onPlayersList={handlePlayersList} />
           </>
         }

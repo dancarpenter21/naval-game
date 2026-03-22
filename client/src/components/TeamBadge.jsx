@@ -32,7 +32,7 @@ function TeamShieldIcon({ color }) {
 
 /**
  * Shows which team the player is on (blue / red / white cell).
- * Intended as an overlay inside a `position: relative` container (e.g. tab content).
+ * Sits in the session overlay row next to {@link SimulationSpeedDial}.
  */
 export default function TeamBadge({ session }) {
   if (!session?.id) return null;
@@ -42,11 +42,8 @@ export default function TeamBadge({ session }) {
 
   return (
     <div
+      className="team-badge"
       style={{
-        position: 'absolute',
-        zIndex: 1500,
-        top: 10,
-        left: 10,
         display: 'flex',
         alignItems: 'center',
         gap: 10,
