@@ -4,6 +4,18 @@ Map and SIDC picker use [milsymbol](https://github.com/spatialillusions/milsymbo
 
 Reference picker (APP-6 mode): <https://sidc.milsymb.net/#/APP6>
 
+## Testing (Docker only)
+
+Do **not** rely on Node/npm on the host for checks. From the **repo root**:
+
+```bash
+docker compose --profile tests run --rm client-test
+```
+
+Or run **server + client**: **`./scripts/docker-tests.sh`**. See the root **`README.md`**.
+
+---
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

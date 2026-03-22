@@ -12,8 +12,14 @@ pub enum PlayerTeamDto {
 
 // Socket payload DTOs shared by server handlers and emitted events.
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatLonDegDto {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
-pub struct ShipSnapshotDto {
+pub struct EntitySnapshotDto {
     pub id: String,
     pub name: String,
     pub allegiance: Allegiance,
@@ -22,11 +28,22 @@ pub struct ShipSnapshotDto {
     pub hae_m: f64,
     pub heading_deg: f64,
     pub sidc: String,
+    /// False if the entity has no `movement` component (cannot receive movement orders).
+    pub movable: bool,
+    /// Simulated seconds until the entity is on its assigned station (orbit/racetrack), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub station_eta_sim_s: Option<f64>,
+    /// Progress [0, 1] along the issued path toward station (requires `movement_path_total_m` on server).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub station_progress: Option<f64>,
+    /// Full planned path for map overlay (current position → waypoints → station).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_path_deg: Option<Vec<LatLonDegDto>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldSnapshotDto {
-    pub ships: Vec<ShipSnapshotDto>,
+    pub entities: Vec<EntitySnapshotDto>,
     /// Simulated seconds since session start (server authority).
     pub sim_elapsed_s: f64,
     /// Exercise clock UTC (session start + sim_elapsed).
@@ -156,6 +173,45 @@ pub struct ChatSendDto {
 #[derive(Debug, Deserialize)]
 pub struct PlayersListRequestDto {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WaypointDto {
+    pub lat_deg: f64,
+    pub lon_deg: f64,
+}
+
+/// Client issues a movement order for a controllable unit (`movable: true` in snapshots).
+#[derive(Debug, Deserialize)]
+pub struct IssueMovementOrderDto {
+    pub session_id: String,
+    pub entity_id: String,
+    /// Intermediate fixes (0–n), visited in order before the terminal station.
+    #[serde(default)]
+    pub waypoints: Vec<WaypointDto>,
+    #[serde(flatten)]
+    pub order: MovementOrderDto,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MovementOrderDto {
+    Orbit {
+        center_lat_deg: f64,
+        center_lon_deg: f64,
+        radius_m: f64,
+        clockwise: bool,
+    },
+    Racetrack {
+        point_a_lat_deg: f64,
+        point_a_lon_deg: f64,
+        point_b_lat_deg: f64,
+        point_b_lon_deg: f64,
+        orbit_distance_m: f64,
+        /// When true, loop direction is clockwise (north-up view). Default false (CCW).
+        #[serde(default)]
+        racetrack_clockwise: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]

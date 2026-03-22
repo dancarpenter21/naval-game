@@ -18,8 +18,15 @@ services:
     networks:
       - tess_net
 
-  # Full Rust test suite once, then exit (CI / local check).
+  # --- tests profile: server unit tests + client lint/build (no Cypress; see e2e profile) ---
+  # Policy: host installs Docker only — no Rust/Node on the host/WSL for tests (see README + scripts/docker-tests.sh).
+  # Run everything:
+  #   ./scripts/docker-tests.sh
+  # Or separately:
   #   docker compose --profile tests run --rm server-test
+  #   docker compose --profile tests run --rm client-test
+
+  # Full Rust test suite once, then exit (CI / local check).
   server-test:
     build:
       context: ./server
@@ -56,6 +63,21 @@ services:
     command: >
       cargo watch -x "test"
 
+  # Client: install deps, ESLint, production build (no Vitest/Jest in repo yet).
+  client-test:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    profiles:
+      - tests
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    networks:
+      - tess_net
+    command: >
+      sh -c "npm ci && npm run lint && npm run build"
+
   client:
     build:
       context: ./client
@@ -64,7 +86,10 @@ services:
     #  - "5173:5173"
     volumes:
       - ./client:/app
+      # Empty on first run — must install into this volume (see command) or imports like geographiclib-geodesic fail.
       - /app/node_modules
+    # Bind mount hides image node_modules; populate the anonymous volume before Vite starts.
+    command: ["/bin/sh", "/app/scripts/docker-dev.sh"]
     environment:
       - CHOKIDAR_USEPOLLING=true
       - VITE_SOCKET_PATH=/socket.io

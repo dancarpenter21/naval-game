@@ -22,6 +22,7 @@ function App() {
   const [players, setPlayers] = useState([]);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [simTiming, setSimTiming] = useState(null);
+  const [worldEntities, setWorldEntities] = useState([]);
 
   const handleSessionEstablished = useCallback((sessionData) => {
     setSession(sessionData);
@@ -37,6 +38,10 @@ function App() {
 
   useEffect(() => {
     if (!session) setSimTiming(null);
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) setWorldEntities([]);
   }, [session]);
 
   /** Server timing fields on every `world_snapshot` (all tabs, not only Map). */
@@ -226,10 +231,14 @@ function App() {
         }
       >
         <Tab label="Map">
-          <MapView socket={socket} session={session} />
+          <MapView
+            socket={socket}
+            session={session}
+            onEntitiesUpdate={setWorldEntities}
+          />
         </Tab>
         <Tab label="Sync Matrix">
-          <SyncMatrixView />
+          <SyncMatrixView entities={worldEntities} simTiming={simTiming} />
         </Tab>
         <Tab label="System View">
           <SystemView />

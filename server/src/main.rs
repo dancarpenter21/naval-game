@@ -16,9 +16,13 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 
 mod dto;
+mod earth;
 mod ecs;
 mod domain;
+mod movement;
 mod scenario;
+#[allow(dead_code)]
+mod terrain;
 mod sidc;
 mod sim_timing;
 use ecs::{Allegiance, EntityConfig, WorldTemplate};
@@ -26,15 +30,12 @@ use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
 use domain::{participant_to_dto, PlayerTeam, ScenarioSideEntity, ScenarioSummary, SessionPublic};
 use dto::{
-    ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, JoinSessionDto,
-    LeaveSessionDto, PlayersListDto, PlayersListRequestDto, RoomPlayerDto, ScenariosListDto,
-    SessionPublicDto, SessionsListDto, SetTimeScaleDto, ShipSnapshotDto, SnapshotRequestDto,
-    StopSessionDto,
+    ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, IssueMovementOrderDto,
+    JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto, PlayersListRequestDto,
+    RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto, SetTimeScaleDto,
+    EntitySnapshotDto, LatLonDegDto, SnapshotRequestDto, StopSessionDto,
 };
-use sim_timing::{
-    SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S,
-    METERS_PER_DEGREE_LAT_MEAN,
-};
+use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
 
 #[derive(Debug, Clone, Deserialize)]
 struct TransformWorld {
@@ -84,17 +85,21 @@ impl<'de> Deserialize<'de> for SymbolConfig {
 }
 
 #[derive(Debug, Clone)]
-struct ShipState {
+struct EntityState {
     id: String,
     name: String,
     allegiance: Allegiance,
     transform: TransformWorld,
-    movement: MovementConfig,
+    /// None = no movement component; unit does not integrate and cannot be ordered.
+    movement: Option<MovementConfig>,
+    movement_mode: movement::MovementMode,
+    /// Total geodesic path length (m) when a movement order was applied; drives `station_progress`.
+    movement_path_total_m: Option<f64>,
     symbol: SymbolConfig,
 }
 
 #[allow(dead_code)] // Reserved for future status / SIDC updates on entities
-impl ShipState {
+impl EntityState {
     fn status(&self) -> Option<Status> {
         status_from_sidc(&self.symbol.sidc)
     }
@@ -113,41 +118,159 @@ fn on_session_closed_stub(_public: &SessionPublic) {
     // Intentionally left empty for now.
 }
 
-fn ship_snapshots_from_world(guard: &[ShipState]) -> Vec<ShipSnapshotDto> {
+fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> {
     guard
         .iter()
-        .map(|s| ShipSnapshotDto {
-            id: s.id.clone(),
-            name: s.name.clone(),
-            allegiance: s.allegiance.clone(),
-            lat_deg: s.transform.lat_deg,
-            lon_deg: s.transform.lon_deg,
-            hae_m: s.transform.hae_m,
-            heading_deg: s.transform.heading_deg,
-            sidc: s.symbol.sidc.clone(),
+        .map(|s| {
+            let (station_eta_sim_s, station_progress) =
+                if let Some(ref mov) = s.movement {
+                    let mps = mov.max_speed_knots * KNOTS_TO_MPS;
+                    movement::station_eta_and_progress(
+                        s.transform.lat_deg,
+                        s.transform.lon_deg,
+                        &s.movement_mode,
+                        s.movement_path_total_m,
+                        mps,
+                    )
+                } else {
+                    (None, None)
+                };
+            let display_path_deg = if s.movement.is_some() {
+                movement::display_path_polyline_deg(
+                    s.transform.lat_deg,
+                    s.transform.lon_deg,
+                    &s.movement_mode,
+                )
+                .map(|pts| {
+                    pts.into_iter()
+                        .map(|(lat_deg, lon_deg)| LatLonDegDto { lat_deg, lon_deg })
+                        .collect()
+                })
+            } else {
+                None
+            };
+            EntitySnapshotDto {
+                id: s.id.clone(),
+                name: s.name.clone(),
+                allegiance: s.allegiance.clone(),
+                lat_deg: s.transform.lat_deg,
+                lon_deg: s.transform.lon_deg,
+                hae_m: s.transform.hae_m,
+                heading_deg: s.transform.heading_deg,
+                sidc: s.symbol.sidc.clone(),
+                movable: s.movement.is_some(),
+                station_eta_sim_s,
+                station_progress,
+                display_path_deg,
+            }
         })
         .collect()
 }
 
 /// Integrate simple kinematics for `dt_sim_s` (simulated seconds, not wall time).
-fn integrate_ships(world: &mut [ShipState], dt_sim_s: f64) {
-    if dt_sim_s <= 0.0 {
-        return;
+fn integrate_entities(world: &mut [EntityState], dt_sim_s: f64) {
+    for entity in world.iter_mut() {
+        let Some(ref mov) = entity.movement else {
+            continue;
+        };
+        movement::integrate_entity(
+            &mut entity.transform.lat_deg,
+            &mut entity.transform.lon_deg,
+            &mut entity.transform.heading_deg,
+            mov.max_speed_knots,
+            &mut entity.movement_mode,
+            dt_sim_s,
+        );
     }
-    for ship in world.iter_mut() {
-        let speed_mps = ship.movement.max_speed_knots * KNOTS_TO_MPS;
-        let dist_m = speed_mps * dt_sim_s;
+}
 
-        let heading_rad = ship.transform.heading_deg.to_radians();
-        // Heading 0° = north, 90° = east
-        let north_m = dist_m * heading_rad.cos();
-        let east_m = dist_m * heading_rad.sin();
+fn player_may_command_unit(team: PlayerTeam, allegiance: &Allegiance) -> bool {
+    match team {
+        PlayerTeam::White => true,
+        PlayerTeam::Red => matches!(allegiance, Allegiance::Hostile),
+        PlayerTeam::Blue => matches!(allegiance, Allegiance::Friendly),
+    }
+}
 
-        let lat_rad = ship.transform.lat_deg.to_radians();
-        let meters_per_deg_lon = METERS_PER_DEGREE_LAT_MEAN * lat_rad.cos().max(1e-6);
+const MAX_MOVEMENT_WAYPOINTS: usize = 48;
 
-        ship.transform.lat_deg += north_m / METERS_PER_DEGREE_LAT_MEAN;
-        ship.transform.lon_deg += east_m / meters_per_deg_lon;
+fn validate_waypoint_path(waypoints: &[(f64, f64)]) -> Result<(), String> {
+    if waypoints.len() > MAX_MOVEMENT_WAYPOINTS {
+        return Err(format!(
+            "At most {MAX_MOVEMENT_WAYPOINTS} waypoints are allowed."
+        ));
+    }
+    for (la, lo) in waypoints {
+        if !la.is_finite() || !lo.is_finite() {
+            return Err("Waypoint coordinates must be finite numbers.".to_string());
+        }
+        if *la < -90.0 || *la > 90.0 {
+            return Err("Waypoint latitude must be between -90 and 90 degrees.".to_string());
+        }
+        if *lo < -180.0 || *lo > 180.0 {
+            return Err("Waypoint longitude must be between -180 and 180 degrees.".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn station_phase_from_order(order: &MovementOrderDto) -> Result<movement::StationPhase, String> {
+    match order {
+        MovementOrderDto::Orbit {
+            center_lat_deg,
+            center_lon_deg,
+            radius_m,
+            clockwise,
+        } => {
+            let r = *radius_m;
+            if !(movement::MIN_ORBIT_RADIUS_M..=movement::MAX_ORBIT_RADIUS_M).contains(&r) {
+                return Err(format!(
+                    "Orbit radius must be between {:.0} m and {:.0} m.",
+                    movement::MIN_ORBIT_RADIUS_M,
+                    movement::MAX_ORBIT_RADIUS_M
+                ));
+            }
+            Ok(movement::StationPhase::Orbit {
+                center_lat_deg: *center_lat_deg,
+                center_lon_deg: *center_lon_deg,
+                radius_m: r,
+                clockwise: *clockwise,
+            })
+        }
+        MovementOrderDto::Racetrack {
+            point_a_lat_deg,
+            point_a_lon_deg,
+            point_b_lat_deg,
+            point_b_lon_deg,
+            orbit_distance_m,
+            racetrack_clockwise,
+        } => {
+            let r = *orbit_distance_m;
+            if !(movement::MIN_ORBIT_RADIUS_M..=movement::MAX_ORBIT_RADIUS_M).contains(&r) {
+                return Err(format!(
+                    "Racetrack turn radius must be between {:.0} m and {:.0} m.",
+                    movement::MIN_ORBIT_RADIUS_M,
+                    movement::MAX_ORBIT_RADIUS_M
+                ));
+            }
+            let loop_path_deg = earth::racetrack_geometry::build_stadium_racetrack(
+                *point_a_lat_deg,
+                *point_a_lon_deg,
+                *point_b_lat_deg,
+                *point_b_lon_deg,
+                r,
+                *racetrack_clockwise,
+            );
+            Ok(movement::StationPhase::Racetrack {
+                end_a_lat: *point_a_lat_deg,
+                end_a_lon: *point_a_lon_deg,
+                end_b_lat: *point_b_lat_deg,
+                end_b_lon: *point_b_lon_deg,
+                turn_radius_m: r,
+                clockwise: *racetrack_clockwise,
+                loop_path_deg,
+            })
+        }
     }
 }
 
@@ -159,7 +282,7 @@ struct GameSession {
     player_names: HashMap<String, String>,
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     _loop_handle: JoinHandle<()>,
-    world: Arc<Mutex<Vec<ShipState>>>,
+    world: Arc<Mutex<Vec<EntityState>>>,
     /// Authoritative simulation clock + time scale (white cell adjusts scale via socket).
     timing: Arc<Mutex<SimTimingState>>,
 }
@@ -248,7 +371,7 @@ fn load_scenario_catalog(world: &WorldTemplate, dir: &str) -> Result<ScenarioCat
     Ok(ScenarioCatalog { summaries, by_id })
 }
 
-fn ship_from_entity_template(entity_template: &EntityConfig, instance_id: String) -> ShipState {
+fn entity_state_from_template(entity_template: &EntityConfig, instance_id: String) -> EntityState {
     let mut transform: Option<TransformWorld> = None;
     let mut movement: Option<MovementConfig> = None;
     let mut symbol: Option<SymbolConfig> = None;
@@ -277,12 +400,14 @@ fn ship_from_entity_template(entity_template: &EntityConfig, instance_id: String
         }
     }
 
-    ShipState {
+    EntityState {
         id: instance_id,
         name: entity_template.name.clone(),
         allegiance: entity_template.allegiance.clone(),
         transform: transform.expect("entity missing transform component"),
-        movement: movement.expect("entity missing movement component"),
+        movement,
+        movement_mode: movement::MovementMode::Cruise,
+        movement_path_total_m: None,
         symbol: symbol.expect("entity missing symbol component"),
     }
 }
@@ -312,12 +437,12 @@ fn apply_scenario_transform_overrides(t: &mut TransformWorld, entry: &ScenarioEn
     }
 }
 
-fn spawn_initial_ships(world_template: &WorldTemplate, scenario: &LoadedScenario) -> Vec<ShipState> {
+fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScenario) -> Vec<EntityState> {
     let spawns = &scenario.config.spawns;
     let red = &scenario.config.red_entities;
     let blue = &scenario.config.blue_entities;
 
-    let mut ships = Vec::new();
+    let mut entities = Vec::new();
 
     if !spawns.is_empty() {
         for spawn in spawns {
@@ -332,7 +457,7 @@ fn spawn_initial_ships(world_template: &WorldTemplate, scenario: &LoadedScenario
                     } else {
                         format!("{}-{}", entity_template.id, i + 1)
                     };
-                    ships.push(ship_from_entity_template(entity_template, instance_id));
+                    entities.push(entity_state_from_template(entity_template, instance_id));
                 }
             } else {
                 warn!(
@@ -349,20 +474,20 @@ fn spawn_initial_ships(world_template: &WorldTemplate, scenario: &LoadedScenario
                 continue;
             };
             let instance_id = entity_template.id.clone();
-            let mut ship = ship_from_entity_template(entity_template, instance_id);
-            apply_scenario_transform_overrides(&mut ship.transform, entry);
-            ships.push(ship);
+            let mut entity = entity_state_from_template(entity_template, instance_id);
+            apply_scenario_transform_overrides(&mut entity.transform, entry);
+            entities.push(entity);
         }
     } else {
         for entity_template in &world_template.entities {
-            ships.push(ship_from_entity_template(
+            entities.push(entity_state_from_template(
                 entity_template,
                 entity_template.id.clone(),
             ));
         }
     }
 
-    ships
+    entities
 }
 
 #[tokio::main]
@@ -477,7 +602,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn spawn_game_loop(
     session_id: String,
     session_name: String,
-    world: Arc<Mutex<Vec<ShipState>>>,
+    world: Arc<Mutex<Vec<EntityState>>>,
     timing: Arc<Mutex<SimTimingState>>,
     io: SocketIo,
     wall_tick: Duration,
@@ -508,33 +633,33 @@ fn spawn_game_loop(
                     };
                     let sim_advance_s = wall_dt_s * scale;
 
-                    let ships_dto = {
+                    let entities_dto = {
                         let mut guard = world.lock().await;
                         let mut remaining = sim_advance_s;
                         while remaining > 1e-9 {
                             let step = remaining.min(MAX_SIM_SUBSTEP_S);
-                            integrate_ships(&mut guard, step);
+                            integrate_entities(&mut guard, step);
                             remaining -= step;
                         }
-                        ship_snapshots_from_world(&guard)
+                        entity_snapshots_from_world(&guard)
                     };
 
                     let dto = {
                         let mut t = timing.lock().await;
                         t.sim_elapsed_s += sim_advance_s;
-                        t.to_world_snapshot(ships_dto)
+                        t.to_world_snapshot(entities_dto)
                     };
 
                     let sim_elapsed_log = dto.sim_elapsed_s;
                     let time_scale_log = dto.time_scale;
-                    let ship_count_log = dto.ships.len();
+                    let entity_count_log = dto.entities.len();
 
                     debug!(
-                        "Game tick: session_name={} session_id={} tick_count={} emitting world_snapshot ships={} sim_elapsed_s={:.2} time_scale={:.2}",
+                        "Game tick: session_name={} session_id={} tick_count={} emitting world_snapshot entities={} sim_elapsed_s={:.2} time_scale={:.2}",
                         session_name,
                         session_id,
                         tick_count,
-                        ship_count_log,
+                        entity_count_log,
                         sim_elapsed_log,
                         time_scale_log
                     );
@@ -545,7 +670,7 @@ fn spawn_game_loop(
                     if tick_count % 64 == 0 {
                         let count = world.lock().await.len();
                         info!(
-                            "Game tick: session_name={} session_id={} tick_count={} ships={} sim_elapsed_s={:.1} time_scale={:.1}",
+                            "Game tick: session_name={} session_id={} tick_count={} entities={} sim_elapsed_s={:.1} time_scale={:.1}",
                             session_name,
                             session_id,
                             tick_count,
@@ -647,12 +772,12 @@ fn on_connect(
                 display_name.clone(),
             );
 
-            let ships = spawn_initial_ships(&world_template, scenario);
-            let world = Arc::new(Mutex::new(ships));
+            let entities = spawn_initial_entities(&world_template, scenario);
+            let world = Arc::new(Mutex::new(entities));
             {
                 let guard = world.lock().await;
                 info!(
-                    "Session spawned scenario_id={} session_name={} session_id={} tick_count={} spawned_count={} ship_ids=[{}]",
+                    "Session spawned scenario_id={} session_name={} session_id={} tick_count={} spawned_count={} entity_ids=[{}]",
                     scenario.id,
                     public.name,
                     public.id,
@@ -772,13 +897,13 @@ fn on_connect(
                 // Send an immediate snapshot to the joiner.
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
-                    let ships = {
+                    let snapshots = {
                         let guard = session.world.lock().await;
-                        ship_snapshots_from_world(&guard)
+                        entity_snapshots_from_world(&guard)
                     };
                     let dto = {
                         let t = session.timing.lock().await;
-                        t.to_world_snapshot(ships)
+                        t.to_world_snapshot(snapshots)
                     };
                     socket.emit("world_snapshot", dto).ok();
                 }
@@ -793,23 +918,131 @@ fn on_connect(
             |socket: SocketRef, Data::<SnapshotRequestDto>(data)| async move {
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
-                    let ships = {
+                    let snapshots = {
                         let guard = session.world.lock().await;
-                        ship_snapshots_from_world(&guard)
+                        entity_snapshots_from_world(&guard)
                     };
                     let dto = {
                         let t = session.timing.lock().await;
-                        t.to_world_snapshot(ships)
+                        t.to_world_snapshot(snapshots)
                     };
                     info!(
-                        "Sending requested world_snapshot session_name={} session_id={} tick_count={} ships={}",
+                        "Sending requested world_snapshot session_name={} session_id={} tick_count={} entities={}",
                         session.public.name,
                         data.id,
                         -1,
-                        dto.ships.len()
+                        dto.entities.len()
                     );
                     socket.emit("world_snapshot", dto).ok();
                 }
+            },
+        );
+    }
+
+    {
+        let store = store.clone();
+        socket.on(
+            "issue_movement_order",
+            |socket: SocketRef, Data::<IssueMovementOrderDto>(data)| async move {
+                let socket_key = socket.id.to_string();
+                let session_id = data.session_id.clone();
+                let entity_id = data.entity_id.clone();
+
+                let store_lock = store.lock().await;
+                let Some(session) = store_lock.get(&session_id) else {
+                    socket
+                        .emit(
+                            "movement_order_rejected",
+                            ErrorDto {
+                                message: "Session not found.".to_string(),
+                            },
+                        )
+                        .ok();
+                    return;
+                };
+
+                let Some(team) = session.player_teams.get(&socket_key).copied() else {
+                    socket
+                        .emit(
+                            "movement_order_rejected",
+                            ErrorDto {
+                                message: "Join the session before issuing orders.".to_string(),
+                            },
+                        )
+                        .ok();
+                    return;
+                };
+
+                let waypoints: Vec<(f64, f64)> = data
+                    .waypoints
+                    .iter()
+                    .map(|w| (w.lat_deg, w.lon_deg))
+                    .collect();
+
+                if let Err(msg) = validate_waypoint_path(&waypoints) {
+                    socket
+                        .emit("movement_order_rejected", ErrorDto { message: msg })
+                        .ok();
+                    return;
+                }
+
+                let station = match station_phase_from_order(&data.order) {
+                    Ok(s) => s,
+                    Err(msg) => {
+                        socket
+                            .emit("movement_order_rejected", ErrorDto { message: msg })
+                            .ok();
+                        return;
+                    }
+                };
+
+                let mut guard = session.world.lock().await;
+                let Some(entity) = guard.iter_mut().find(|s| s.id == entity_id) else {
+                    socket
+                        .emit(
+                            "movement_order_rejected",
+                            ErrorDto {
+                                message: "Unknown unit id.".to_string(),
+                            },
+                        )
+                        .ok();
+                    return;
+                };
+
+                if entity.movement.is_none() {
+                    socket
+                        .emit(
+                            "movement_order_rejected",
+                            ErrorDto {
+                                message: "That unit cannot receive movement orders.".to_string(),
+                            },
+                        )
+                        .ok();
+                    return;
+                }
+
+                if !player_may_command_unit(team, &entity.allegiance) {
+                    socket
+                        .emit(
+                            "movement_order_rejected",
+                            ErrorDto {
+                                message: "You cannot command that unit.".to_string(),
+                            },
+                        )
+                        .ok();
+                    return;
+                }
+
+                let slat = entity.transform.lat_deg;
+                let slon = entity.transform.lon_deg;
+                let total_m = movement::plan_total_path_m(slat, slon, &waypoints, &station);
+                entity.movement_path_total_m = Some(total_m);
+                entity.movement_mode = movement::mode_from_waypoints_and_station(
+                    waypoints,
+                    station,
+                    slat,
+                    slon,
+                );
             },
         );
     }

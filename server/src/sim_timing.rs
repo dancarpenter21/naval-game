@@ -10,7 +10,7 @@ use std::env;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use tracing::warn;
 
-use crate::dto::{ShipSnapshotDto, WorldSnapshotDto};
+use crate::dto::{EntitySnapshotDto, WorldSnapshotDto};
 
 /// Environment variable: simulation wall-clock rate in Hz (ticks per second).
 pub const ENV_SIM_TICK_HZ: &str = "SIM_TICK_HZ";
@@ -32,9 +32,6 @@ pub const MAX_TIME_SCALE: f64 = 64.0;
 
 /// SI definition: 1 international knot = 1 nautical mile per hour = 1852 m / 3600 s.
 pub const KNOTS_TO_MPS: f64 = 1852.0 / 3600.0;
-
-/// Mean meters per degree latitude (good global approximation for surface movement).
-pub const METERS_PER_DEGREE_LAT_MEAN: f64 = 111_320.0;
 
 /// Resolved wall-clock tick configuration (shared by all game sessions).
 #[derive(Debug, Clone)]
@@ -117,9 +114,9 @@ impl SimTimingState {
         (self.session_start_utc + ch).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
     }
 
-    pub fn to_world_snapshot(&self, ships: Vec<ShipSnapshotDto>) -> WorldSnapshotDto {
+    pub fn to_world_snapshot(&self, entities: Vec<EntitySnapshotDto>) -> WorldSnapshotDto {
         WorldSnapshotDto {
-            ships,
+            entities,
             sim_elapsed_s: self.sim_elapsed_s,
             sim_time_utc: self.sim_time_rfc3339(),
             wall_dt_s: self.wall_dt_s,

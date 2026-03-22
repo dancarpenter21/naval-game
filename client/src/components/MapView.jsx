@@ -1,10 +1,11 @@
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import missileOutlinePngUrl from '../assets/missile-outline-transparent.png';
+import MovementPlanningLayer from './MovementPlanningLayer';
 
 /** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
 const MILSYMBOL_STANDARD = 'APP6';
@@ -92,7 +93,12 @@ const isMissileSidc = (sidc) => {
 const MISSILE_OUTLINE_PNG_W = 1024;
 const MISSILE_OUTLINE_PNG_H = 1536;
 
-const ShipDtoSchema = z.object({
+const LatLonDegSchema = z.object({
+  lat_deg: z.number(),
+  lon_deg: z.number(),
+});
+
+const EntityDtoSchema = z.object({
   id: z.string(),
   name: z.string(),
   allegiance: z.enum(['hostile', 'friendly']),
@@ -101,20 +107,33 @@ const ShipDtoSchema = z.object({
   hae_m: z.number(),
   heading_deg: z.number(),
   sidc: z.string(),
+  movable: z.boolean().optional(),
+  station_eta_sim_s: z.number().optional().nullable(),
+  station_progress: z.number().optional().nullable(),
+  display_path_deg: z.array(LatLonDegSchema).optional().nullable(),
 });
 
-// Enforce that the payload is an object with a `ships` array.
-// We'll validate each element separately so malformed ships don't break rendering.
+// Enforce that the payload is an object with an `entities` array.
+// We'll validate each element separately so malformed entries don't break rendering.
 const WorldSnapshotDtoShapeSchema = z.object({
-  ships: z.array(z.unknown()),
+  entities: z.array(z.unknown()),
   sim_elapsed_s: z.number().optional(),
   sim_time_utc: z.string().optional(),
   wall_dt_s: z.number().optional(),
   time_scale: z.number().optional(),
 });
 
-const MapView = ({ socket, session }) => {
+const MapView = ({ socket, session, onEntitiesUpdate }) => {
   const [entities, setEntities] = useState([]);
+  const [selectedEntityId, setSelectedEntityId] = useState(null);
+  const [oKeyHeld, setOKeyHeld] = useState(false);
+  const [rKeyHeld, setRKeyHeld] = useState(false);
+  const [planWaypoints, setPlanWaypoints] = useState([]);
+  const [racetrackDraft, setRacetrackDraft] = useState({
+    phase: 'idle',
+    a: null,
+    b: null,
+  });
   const outerRef = useRef(null);
   const [outerSize, setOuterSize] = useState({ width: 0, height: 0 });
 
@@ -122,7 +141,7 @@ const MapView = ({ socket, session }) => {
     if (!socket || !session?.id) return;
 
     const handleWorldSnapshot = (snapshot) => {
-      const candidate = Array.isArray(snapshot) ? { ships: snapshot } : snapshot;
+      const candidate = Array.isArray(snapshot) ? { entities: snapshot } : snapshot;
 
       const topLevel = WorldSnapshotDtoShapeSchema.safeParse(candidate);
       if (!topLevel.success) {
@@ -131,40 +150,46 @@ const MapView = ({ socket, session }) => {
           issues: topLevel.error.issues.slice(0, 5),
         });
         setEntities([]);
+        onEntitiesUpdate?.([]);
         return;
       }
 
-      const shipsUnknown = topLevel.data.ships;
+      const entitiesUnknown = topLevel.data.entities;
       const validEntities = [];
       let invalidCount = 0;
 
-      for (const shipUnknown of shipsUnknown) {
-        const parsedShip = ShipDtoSchema.safeParse(shipUnknown);
-        if (!parsedShip.success) {
+      for (const entityUnknown of entitiesUnknown) {
+        const parsedEntity = EntityDtoSchema.safeParse(entityUnknown);
+        if (!parsedEntity.success) {
           invalidCount += 1;
           continue;
         }
-        validEntities.push(parsedShip.data);
+        const row = parsedEntity.data;
+        validEntities.push({
+          ...row,
+          movable: row.movable !== false,
+        });
       }
 
       console.log('[world_snapshot] received', {
         isArray: Array.isArray(snapshot),
-        normalizedCount: shipsUnknown.length,
+        normalizedCount: entitiesUnknown.length,
         validCount: validEntities.length,
         sample: validEntities.slice(0, 3).map((s) => ({ id: s.id, allegiance: s.allegiance })),
       });
 
       if (invalidCount > 0) {
-        console.error('[world_snapshot] invalid ship DTOs detected', {
+        console.error('[world_snapshot] invalid entity DTOs detected', {
           invalidCount,
-          sampleInvalid: shipsUnknown
-            .filter((s) => !ShipDtoSchema.safeParse(s).success)
+          sampleInvalid: entitiesUnknown
+            .filter((s) => !EntityDtoSchema.safeParse(s).success)
             .slice(0, 3)
             .map((s) => typeof s),
         });
       }
 
       setEntities(validEntities);
+      onEntitiesUpdate?.(validEntities);
     };
 
     socket.on('world_snapshot', handleWorldSnapshot);
@@ -172,7 +197,54 @@ const MapView = ({ socket, session }) => {
     return () => {
       socket.off('world_snapshot', handleWorldSnapshot);
     };
-  }, [socket, session?.id]);
+  }, [socket, session?.id, onEntitiesUpdate]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onRejected = (err) => {
+      console.warn('[movement_order_rejected]', err);
+    };
+    socket.on('movement_order_rejected', onRejected);
+    return () => socket.off('movement_order_rejected', onRejected);
+  }, [socket]);
+
+  useEffect(() => {
+    const down = (e) => {
+      if (e.key === 'o' || e.key === 'O') setOKeyHeld(true);
+      if (e.key === 'r' || e.key === 'R') setRKeyHeld(true);
+    };
+    const up = (e) => {
+      if (e.key === 'o' || e.key === 'O') setOKeyHeld(false);
+      if (e.key === 'r' || e.key === 'R') setRKeyHeld(false);
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key === 'Escape') {
+        setPlanWaypoints([]);
+        setRacetrackDraft({ phase: 'idle', a: null, b: null });
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, []);
+
+  useEffect(() => {
+    setPlanWaypoints([]);
+    setRacetrackDraft({ phase: 'idle', a: null, b: null });
+  }, [selectedEntityId]);
+
+  const clearMovementPlan = useCallback(() => {
+    setPlanWaypoints([]);
+    setRacetrackDraft({ phase: 'idle', a: null, b: null });
+  }, []);
 
   useEffect(() => {
     if (!outerRef.current) return;
@@ -214,6 +286,24 @@ const MapView = ({ socket, session }) => {
         : playerTeam === 'blue'
           ? blueTeamEntities
           : entities;
+
+  useEffect(() => {
+    if (!selectedEntityId) return;
+    if (!visibleEntities.some((s) => s.id === selectedEntityId)) {
+      setSelectedEntityId(null);
+    }
+  }, [visibleEntities, selectedEntityId]);
+
+  const selectedEntity = useMemo(
+    () => visibleEntities.find((s) => s.id === selectedEntityId) ?? null,
+    [visibleEntities, selectedEntityId],
+  );
+
+  const serverActivePathPositions = useMemo(() => {
+    const dp = selectedEntity?.display_path_deg;
+    if (!Array.isArray(dp) || dp.length < 2) return null;
+    return dp.map((p) => [p.lat_deg, p.lon_deg]);
+  }, [selectedEntity?.display_path_deg]);
 
   const center =
     visibleEntities.length > 0 ? [visibleEntities[0].lat_deg, visibleEntities[0].lon_deg] : [35.0, -40.0];
@@ -324,6 +414,37 @@ const MapView = ({ socket, session }) => {
         <div style={{ opacity: 0.85 }}>
           {visibleEntities.map((s) => s.id).join(', ')}
         </div>
+        <div style={{ marginTop: 8, opacity: 0.9, lineHeight: 1.4 }}>
+          <strong>Movement plan</strong>: select a movable unit →{' '}
+          <strong>right-click</strong> to add waypoints (0–n) → then{' '}
+          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>O</kbd>
+          + left-drag = orbit (center &amp; radius; east = CW) or{' '}
+          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>R</kbd>
+          + click A → click B → drag from B for racetrack turn radius.{' '}
+          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd> clears
+          waypoints. Preview in light green; ETA on Sync Matrix tab.
+        </div>
+        {planWaypoints.length > 0 && (
+          <div style={{ marginTop: 4, opacity: 0.85 }}>
+            Waypoints queued: {planWaypoints.length}
+          </div>
+        )}
+        {racetrackDraft.phase !== 'idle' && (
+          <div style={{ marginTop: 4, opacity: 0.85 }}>
+            Racetrack:{' '}
+            {racetrackDraft.phase === 'need_b'
+              ? 'click second point (B)'
+              : 'drag from B for turn radius'}
+          </div>
+        )}
+        {selectedEntity && (
+          <div style={{ marginTop: 6, opacity: 0.95 }}>
+            Selected: <strong>{selectedEntity.name}</strong> ({selectedEntity.id})
+            {!selectedEntity.movable && (
+              <span style={{ color: '#f87171' }}> — not movable</span>
+            )}
+          </div>
+        )}
       </div>
 
       <div
@@ -340,14 +461,24 @@ const MapView = ({ socket, session }) => {
           pointerEvents: 'none',
         }}
       >
-        {visibleRedTeamEntities.map((ship) => {
-          const svg = createMilSymbolSvg({ sidc: ship.sidc, size: redUnitIconSize });
+        {visibleRedTeamEntities.map((entity) => {
+          const svg = createMilSymbolSvg({ sidc: entity.sidc, size: redUnitIconSize });
 
           return (
             <div
-              key={ship.id}
+              key={entity.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedEntityId(entity.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedEntityId(entity.id);
+                }
+              }}
               style={{
                 pointerEvents: 'auto',
+                cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 flexDirection: 'column',
@@ -358,13 +489,16 @@ const MapView = ({ socket, session }) => {
                 height: redUnitCardHeight,
                 borderRadius: 0,
                 background: 'rgba(220, 38, 38, 0.35)',
-                border: '1px solid rgba(220, 38, 38, 0.35)',
+                border:
+                  selectedEntityId === entity.id
+                    ? '2px solid #fbbf24'
+                    : '1px solid rgba(220, 38, 38, 0.35)',
                 color: 'white',
                 boxSizing: 'border-box',
                 textAlign: 'center',
                 overflow: 'hidden',
               }}
-              title={ship.name}
+              title={entity.name}
             >
               <div
                 style={{
@@ -389,7 +523,7 @@ const MapView = ({ socket, session }) => {
                     maxWidth: redUnitCardWidth,
                   }}
                 >
-                  {ship.name}
+                  {entity.name}
                 </div>
                 <div
                   style={{
@@ -402,7 +536,7 @@ const MapView = ({ socket, session }) => {
                     maxWidth: redUnitCardWidth,
                   }}
                 >
-                  {ship.id}
+                  {entity.id}
                 </div>
               </div>
             </div>
@@ -426,14 +560,24 @@ const MapView = ({ socket, session }) => {
             pointerEvents: 'none',
           }}
         >
-          {visibleBlueTeamEntities.map((ship) => {
-            const svg = createMilSymbolSvg({ sidc: ship.sidc, size: blueUnitIconSize });
+          {visibleBlueTeamEntities.map((entity) => {
+            const svg = createMilSymbolSvg({ sidc: entity.sidc, size: blueUnitIconSize });
 
             return (
               <div
-                key={ship.id}
+                key={entity.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedEntityId(entity.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelectedEntityId(entity.id);
+                  }
+                }}
                 style={{
                   pointerEvents: 'auto',
+                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   flexDirection: 'column',
@@ -444,13 +588,16 @@ const MapView = ({ socket, session }) => {
                   height: blueUnitCardHeight,
                   borderRadius: 0,
                   background: 'rgba(59, 130, 246, 0.35)',
-                  border: '1px solid rgba(59, 130, 246, 0.35)',
+                  border:
+                    selectedEntityId === entity.id
+                      ? '2px solid #fbbf24'
+                      : '1px solid rgba(59, 130, 246, 0.35)',
                   color: 'white',
                   boxSizing: 'border-box',
                   textAlign: 'center',
                   overflow: 'hidden',
                 }}
-                title={ship.name}
+                title={entity.name}
               >
                 <div
                   style={{
@@ -475,7 +622,7 @@ const MapView = ({ socket, session }) => {
                       maxWidth: blueUnitCardWidth,
                     }}
                   >
-                    {ship.name}
+                    {entity.name}
                   </div>
                   <div
                     style={{
@@ -488,7 +635,7 @@ const MapView = ({ socket, session }) => {
                       maxWidth: blueUnitCardWidth,
                     }}
                   >
-                    {ship.id}
+                    {entity.id}
                   </div>
                 </div>
               </div>
@@ -507,13 +654,46 @@ const MapView = ({ socket, session }) => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
         />
-        {visibleEntities.map((ship) => {
-          const entityKey = `${ship.id}:${ship.sidc}`;
+        <MovementPlanningLayer
+          sessionId={session?.id}
+          socket={socket}
+          selectedEntity={selectedEntity}
+          oHeld={oKeyHeld}
+          rHeld={rKeyHeld}
+          planWaypoints={planWaypoints}
+          setPlanWaypoints={setPlanWaypoints}
+          racetrackDraft={racetrackDraft}
+          setRacetrackDraft={setRacetrackDraft}
+          onPlanCommitted={clearMovementPlan}
+        />
+        {serverActivePathPositions && (
+          <Polyline
+            positions={serverActivePathPositions}
+            pathOptions={{
+              color: '#38bdf8',
+              weight: 3,
+              opacity: 0.92,
+              dashArray: '12 8',
+            }}
+          />
+        )}
+        {visibleEntities.map((entity) => {
+          const entityKey = `${entity.id}:${entity.sidc}`;
           const icon = markerIconsByEntityKey.get(entityKey);
           return (
-            <Marker key={entityKey} position={[ship.lat_deg, ship.lon_deg]} icon={icon}>
+            <Marker
+              key={entityKey}
+              position={[entity.lat_deg, entity.lon_deg]}
+              icon={icon}
+              eventHandlers={{
+                click: (e) => {
+                  L.DomEvent.stopPropagation(e.originalEvent);
+                  setSelectedEntityId(entity.id);
+                },
+              }}
+            >
               <Popup>
-                {ship.name} ({ship.id})
+                {entity.name} ({entity.id})
               </Popup>
             </Marker>
           );

@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn example_ship_components_are_loaded_correctly() {
+    fn example_entity_components_are_loaded_correctly() {
         let dir = entities_dir();
         let template = WorldTemplate::load_from_dir(&dir)
             .unwrap_or_else(|e| panic!("failed to load entities from {:?}: {e}", dir));

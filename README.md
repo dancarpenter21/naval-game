@@ -10,23 +10,39 @@ Most of the game takes place on the 2D map. There is also a page for unit descri
 
 ## Architecture
 
-This game is built on a client-server architecture. The game state is maintained on the server and the client is updated in real-time. The server is a Rust application built from a map with Turf.js for geometry calculations. The client is a web application built from a React.js application with a Node.js backend. The game itself is an entity component system where units are airframes, boats, etc, and entity has components that define its properties, capabilities, and behaviors.
+This game is built on a client-server architecture. The game state is maintained on the server and the client is updated in real-time. The server is a Rust application; **horizontal geometry** uses **WGS84 geodesics** (GeographicLib, `server/src/earth.rs`) with a matching client module (`client/src/geo/wgs84Geodesic.js`). **Terrain / DTED** is not loaded yet—see **`docs/EARTH_AND_TERRAIN.md`** for hooks and rendering options (Cesium, MapLibre terrain, etc.). The client is a React app (Leaflet map today). The game uses an entity component system: units are airframes, vessels, etc., and each entity has components for properties, capabilities, and behaviors.
 
-## Running tests (Rust server)
+## Running tests (Docker only)
 
-Run the server unit tests **via Docker Compose** (same toolchain and cargo cache as dev):
+**Rust, Node, and npm are not installed on the host** (WSL or otherwise). **All** server unit tests and client lint/build checks **must** run through Docker Compose; toolchains exist only inside the images.
 
-- **One shot** — full `cargo test`, then exit:
+**Prerequisite:** [Docker Desktop](https://docs.docker.com/desktop/) (or Docker Engine) running, with WSL integration enabled if you use WSL.
+
+- **All server + client checks** (recommended):
+
+  ```bash
+  ./scripts/docker-tests.sh
+  ```
+
+- **Server only** — full `cargo test`, then exit:
 
   ```bash
   docker compose --profile tests run --rm server-test
   ```
 
-- **Watch mode** — re-run tests when `./server` sources change:
+- **Client only** — `npm ci`, `npm run lint`, `npm run build` (inside the client image):
+
+  ```bash
+  docker compose --profile tests run --rm client-test
+  ```
+
+- **Watch mode (server tests)** — re-run when `./server` sources change:
 
   ```bash
   docker compose --profile tests up server-tests
   ```
+
+CI runs **`./scripts/docker-tests.sh`** via **`.github/workflows/tests.yml`** so the same Docker-only path is enforced on every push/PR.
 
 ## E2E UI tests (Cypress, Docker only)
 
@@ -58,6 +74,8 @@ Enter a **username** on the session screen before creating or joining a game. Th
 ## Deployment
 
 The game is deployed as Docker compose.yaml with containers for the server, the client dev server (Vite), and nginx as a reverse proxy. The **SIDC builder** is a static page shipped with the client at **`/sidc-picker/index.html`** (no separate sidc-picker container).
+
+The **client** bind-mounts `./client` over `/app` and keeps **`node_modules`** on an anonymous volume (so the host does not need Node). On start, **`client/scripts/docker-dev.sh`** runs **`npm ci`** when that volume is empty or when **`package-lock.json`** is newer than a stamp file—otherwise Vite would fail to resolve imports (e.g. **`geographiclib-geodesic`**). After changing dependencies, restart the client container; if things are stuck, **`docker compose up --build --force-recreate client`**.
 
 ### SIDC help
 
