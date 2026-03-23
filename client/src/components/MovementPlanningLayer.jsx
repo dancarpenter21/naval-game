@@ -1,6 +1,8 @@
-import { Circle, CircleMarker, Polyline, useMap, useMapEvents } from 'react-leaflet';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import { Circle, CircleMarker, Polyline, useMapEvents } from 'react-leaflet';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { geodesicDistanceM, geodesicPointTowardFromCenter } from '../geo/wgs84Geodesic';
+import { mapClickDebug } from '../utils/mapClickDebug';
 
 const MIN_ORBIT_RADIUS_M = 75;
 
@@ -25,25 +27,46 @@ function waypointPayload(pts) {
 /**
  * Right-click waypoints, O+drag orbit, R + click A + click B + drag radius (racetrack).
  */
-export default function MovementPlanningLayer({
-  sessionId,
-  socket,
-  selectedEntity,
-  oHeld,
-  rHeld,
-  planWaypoints,
-  setPlanWaypoints,
-  racetrackDraft,
-  setRacetrackDraft,
-  onPlanCommitted,
-}) {
-  const map = useMap();
+const MovementPlanningLayer = forwardRef(function MovementPlanningLayer(
+  {
+    sessionId,
+    socket,
+    selectedEntity,
+    oHeld,
+    rHeld,
+    planWaypoints,
+    setPlanWaypoints,
+    racetrackDraft,
+    setRacetrackDraft,
+    onPlanCommitted,
+  },
+  ref,
+) {
   const dragRef = useRef(null);
   const lastEdgeRef = useRef(null);
   const planWaypointsRef = useRef(planWaypoints);
   const racetrackRef = useRef(racetrackDraft);
   const [orbitPreview, setOrbitPreview] = useState(null);
   const [racetrackRadiusPreview, setRacetrackRadiusPreview] = useState(null);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      /** Cancel in-progress orbit / racetrack radius drag (no order emit). @returns {boolean} whether anything was cleared */
+      clearTransientDrafts() {
+        const had =
+          dragRef.current != null ||
+          orbitPreview != null ||
+          racetrackRadiusPreview != null;
+        dragRef.current = null;
+        lastEdgeRef.current = null;
+        setOrbitPreview(null);
+        setRacetrackRadiusPreview(null);
+        return had;
+      },
+    }),
+    [orbitPreview, racetrackRadiusPreview],
+  );
 
   useEffect(() => {
     planWaypointsRef.current = planWaypoints;
@@ -55,19 +78,29 @@ export default function MovementPlanningLayer({
   const canPlan = Boolean(sessionId && socket && selectedEntity?.id && selectedEntity?.movable);
   const stationModifierActive = (oHeld && !rHeld) || (rHeld && !oHeld);
 
+  // Mouse map pan is disabled globally (WASD pan in MapKeyboardPanLayer); orbit/racetrack use raw drag.
+
+  useEffect(() => {
+    mapClickDebug('planning:state', {
+      canPlan,
+      stationModifierActive,
+      selectedId: selectedEntity?.id,
+      movable: selectedEntity?.movable,
+      racetrackPhase: racetrackDraft.phase,
+    });
+  }, [canPlan, stationModifierActive, selectedEntity?.id, selectedEntity?.movable, racetrackDraft.phase]);
+
   const clearOrbitPreview = useCallback(() => {
     dragRef.current = null;
     lastEdgeRef.current = null;
     setOrbitPreview(null);
-    map?.dragging?.enable();
-  }, [map]);
+  }, []);
 
   const clearRacetrackDrag = useCallback(() => {
     dragRef.current = null;
     lastEdgeRef.current = null;
     setRacetrackRadiusPreview(null);
-    map?.dragging?.enable();
-  }, [map]);
+  }, []);
 
   const finishOrbitDrag = useCallback(
     (edgeLatLng) => {
@@ -160,16 +193,40 @@ export default function MovementPlanningLayer({
   useMapEvents({
     contextmenu(e) {
       e.originalEvent?.preventDefault?.();
+      mapClickDebug('planning:contextmenu', { canPlan, latlng: e.latlng });
       if (!canPlan) return;
+      const oe = e.originalEvent;
+      if (oe) {
+        L.DomEvent.stopPropagation(oe);
+      }
       const { lat, lng } = e.latlng;
+      mapClickDebug('planning:waypoint:add', { lat, lng });
       setPlanWaypoints((prev) => [...prev, { lat, lng }]);
     },
     mousedown(e) {
-      if (!canPlan || e.originalEvent.button !== 0) return;
+      const btn = e.originalEvent.button;
+      if (btn === 0) {
+        mapClickDebug('planning:mousedown:left', {
+          canPlan,
+          stationModifierActive,
+          oHeld,
+          rHeld,
+          racetrackPhase: racetrackRef.current.phase,
+        });
+      }
+      if (!canPlan || btn !== 0) return;
       if (!stationModifierActive) return;
 
+      mapClickDebug('planning:mousedown:station-capture', { oHeld, rHeld, phase: racetrackRef.current.phase });
+
+      const oe = e.originalEvent;
+      if (oe) {
+        L.DomEvent.stopPropagation(oe);
+        // Prevent focus/outline quirks; pan is already off while canPlan.
+        oe.preventDefault?.();
+      }
+
       if (oHeld && !rHeld) {
-        map.dragging?.disable();
         dragRef.current = { kind: 'orbit', center: e.latlng };
         lastEdgeRef.current = e.latlng;
         setOrbitPreview({ center: e.latlng, edge: e.latlng });
@@ -187,7 +244,6 @@ export default function MovementPlanningLayer({
         if (d.phase === 'need_b' && d.a) {
           const b = e.latlng;
           setRacetrackDraft({ phase: 'drag', a: d.a, b });
-          map.dragging?.disable();
           dragRef.current = { kind: 'racetrack', center: b };
           lastEdgeRef.current = b;
           setRacetrackRadiusPreview({ center: b, edge: b });
@@ -327,4 +383,6 @@ export default function MovementPlanningLayer({
       )}
     </>
   );
-}
+});
+
+export default MovementPlanningLayer;

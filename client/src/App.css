@@ -177,3 +177,16 @@ a.menu-item.menu-link {
 .leaflet-container {
   font-family: 'Inter', sans-serif;
 }
+
+/*
+ * Milsymbol (and similar) put SVG <text>/<path> inside divIcon. Hit-testing often lands on
+ * those nodes, so Leaflet fires map-level events instead of Marker click. Disable pointer
+ * events on descendants so the marker icon box receives the click.
+ */
+.leaflet-marker-icon {
+  pointer-events: auto;
+}
+
+.leaflet-marker-icon * {
+  pointer-events: none;
+}

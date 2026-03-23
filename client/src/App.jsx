@@ -23,6 +23,8 @@ function App() {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [simTiming, setSimTiming] = useState(null);
   const [worldEntities, setWorldEntities] = useState([]);
+  /** Survives tab switches so Map tab can restore focus around the selected unit. */
+  const [mapSelectedEntityId, setMapSelectedEntityId] = useState(null);
 
   const handleSessionEstablished = useCallback((sessionData) => {
     setSession(sessionData);
@@ -43,6 +45,10 @@ function App() {
   useEffect(() => {
     if (!session) setWorldEntities([]);
   }, [session]);
+
+  useEffect(() => {
+    setMapSelectedEntityId(null);
+  }, [session?.id]);
 
   /** Server timing fields on every `world_snapshot` (all tabs, not only Map). */
   useEffect(() => {
@@ -232,9 +238,12 @@ function App() {
       >
         <Tab label="Map">
           <MapView
+            key={session?.id ?? 'no-session'}
             socket={socket}
             session={session}
             onEntitiesUpdate={setWorldEntities}
+            selectedEntityId={mapSelectedEntityId}
+            onSelectedEntityIdChange={setMapSelectedEntityId}
           />
         </Tab>
         <Tab label="Sync Matrix">

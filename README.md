@@ -12,6 +12,15 @@ Most of the game takes place on the 2D map. There is also a page for unit descri
 
 This game is built on a client-server architecture. The game state is maintained on the server and the client is updated in real-time. The server is a Rust application; **horizontal geometry** uses **WGS84 geodesics** (GeographicLib, `server/src/earth.rs`) with a matching client module (`client/src/geo/wgs84Geodesic.js`). **Terrain / DTED** is not loaded yet—see **`docs/EARTH_AND_TERRAIN.md`** for hooks and rendering options (Cesium, MapLibre terrain, etc.). The client is a React app (Leaflet map today). The game uses an entity component system: units are airframes, vessels, etc., and each entity has components for properties, capabilities, and behaviors.
 
+### Debug: map clicks vs markers
+
+The client logs **`[naval:map-clicks]`** for roster taps, marker `click` handlers, movement-planning pointer events, and Leaflet map-level `click` / `mousedown` / `contextmenu` (see `MapPointerDebugLayer.jsx`, `MovementPlanningLayer.jsx`, `MapView.jsx`).
+
+- **Vite dev** (`npm run dev` / Docker client): logging is **on** by default.
+- **Production build**: run `localStorage.setItem('naval_debug_map_clicks', '1')` in the browser console, then reload. Clear with `removeItem('naval_debug_map_clicks')`.
+
+Filter the console on `naval:map-clicks`. If you see `leaflet:map:click` / `leaflet:map:mousedown` with an SVG target (e.g. `tag: 'text'`) but never `marker:click:handler`, the hit was on inner SVG inside the icon, not the marker root — **`App.css` routes pointer events through `.leaflet-marker-icon * { pointer-events: none }`** so the marker receives the click. If a vector layer sits above markers, you’ll see map events without marker logs for a different reason.
+
 ## Running tests (Docker only)
 
 **Rust, Node, and npm are not installed on the host** (WSL or otherwise). **All** server unit tests and client lint/build checks **must** run through Docker Compose; toolchains exist only inside the images.

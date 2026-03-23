@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
@@ -6,6 +6,56 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import missileOutlinePngUrl from '../assets/missile-outline-transparent.png';
 import MovementPlanningLayer from './MovementPlanningLayer';
+import MapKeyboardPanLayer from './MapKeyboardPanLayer';
+import MapPointerDebugLayer from './MapPointerDebugLayer';
+import { mapClickDebug } from '../utils/mapClickDebug';
+import { readMapViewMemory, writeMapViewMemory } from '../map/mapViewMemory';
+
+/** Zoom when re-opening the map with a unit already selected (no saved view). */
+const SELECTED_ENTITY_FOCUS_ZOOM = 7;
+const DEFAULT_MAP_ZOOM = 4;
+
+/** Persist center/zoom while the map exists (tab switches unmount MapView). */
+function MapViewMemoryWriter({ sessionId }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    const save = () => {
+      const c = map.getCenter();
+      writeMapViewMemory(sessionId, [c.lat, c.lng], map.getZoom());
+    };
+    map.on('moveend', save);
+    map.on('zoomend', save);
+    return () => {
+      map.off('moveend', save);
+      map.off('zoomend', save);
+    };
+  }, [map, sessionId]);
+  return null;
+}
+
+/**
+ * If we booted on an empty entity list (e.g. tab remount before snapshot), snap to
+ * selected unit or first visible entity once data exists — unless we restored from memory.
+ */
+function MapViewDeferredGeoFocus({ fromMemory, selectedEntityId, visibleEntities }) {
+  const map = useMap();
+  const appliedRef = useRef(false);
+  useEffect(() => {
+    if (fromMemory || appliedRef.current) return;
+    if (!visibleEntities.length) return;
+    const sel =
+      selectedEntityId && visibleEntities.find((s) => s.id === selectedEntityId);
+    if (sel) {
+      map.setView([sel.lat_deg, sel.lon_deg], SELECTED_ENTITY_FOCUS_ZOOM, { animate: false });
+    } else {
+      const first = visibleEntities[0];
+      map.setView([first.lat_deg, first.lon_deg], DEFAULT_MAP_ZOOM, { animate: false });
+    }
+    appliedRef.current = true;
+  }, [map, fromMemory, selectedEntityId, visibleEntities]);
+  return null;
+}
 
 /** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
 const MILSYMBOL_STANDARD = 'APP6';
@@ -25,7 +75,7 @@ const createMilSymbolSvg = ({ sidc, size }) => {
   return symbol.asSVG();
 };
 
-const createMilSymbolIcon = ({ sidc, name }) => {
+const createMilSymbolIcon = ({ sidc, name, selected = false }) => {
   try {
     const normalizedSidc = normalizeSidc(sidc);
     const symbol = new ms.Symbol(normalizedSidc, {
@@ -33,15 +83,13 @@ const createMilSymbolIcon = ({ sidc, name }) => {
       standard: MILSYMBOL_STANDARD,
     });
     const svg = symbol.asSVG();
-    console.log('[milsymbol] built', {
-      sidc,
-      normalizedSidc,
-      svgLength: svg?.length,
-      size: symbol.getSize(),
-    });
+
+    const ring = selected
+      ? 'box-shadow: 0 0 0 3px #fbbf24, 0 0 14px rgba(251,191,36,0.9); border-radius: 6px; padding: 2px;'
+      : '';
 
     return L.divIcon({
-      className: 'custom-milsymbol',
+      className: selected ? 'custom-milsymbol map-entity-selected' : 'custom-milsymbol',
       html: `
         <div style="
           width: 25px;
@@ -50,12 +98,13 @@ const createMilSymbolIcon = ({ sidc, name }) => {
           align-items: center;
           justify-content: center;
           overflow: visible;
+          ${ring}
         " title="${name}">
           ${svg}
         </div>
       `,
-      iconSize: [25, 25],
-      iconAnchor: [12, 12],
+      iconSize: selected ? [31, 31] : [25, 25],
+      iconAnchor: selected ? [15, 15] : [12, 12],
     });
   } catch (error) {
     console.warn('[milsymbol] failed to build icon, using fallback', {
@@ -123,9 +172,84 @@ const WorldSnapshotDtoShapeSchema = z.object({
   time_scale: z.number().optional(),
 });
 
-const MapView = ({ socket, session, onEntitiesUpdate }) => {
+function isTypingInFormField() {
+  const el = document.activeElement;
+  if (!el || typeof el !== 'object') return false;
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+function visibleEntitiesFromEntitiesAndTeam(entities, playerTeam) {
+  const redTeamEntities = entities.filter(
+    (s) => String(s.allegiance ?? 'hostile').toLowerCase() === 'hostile',
+  );
+  const blueTeamEntities = entities.filter(
+    (s) => String(s.allegiance ?? '').toLowerCase() === 'friendly',
+  );
+  return playerTeam === 'white'
+    ? entities
+    : playerTeam === 'red'
+      ? redTeamEntities
+      : playerTeam === 'blue'
+        ? blueTeamEntities
+        : entities;
+}
+
+/** One-shot per MapView mount; `entitiesAtMount` is usually [] (see deferred focus). */
+function computeInitialMapBootstrap(sessionId, selectedEntityIdAtMount, entitiesAtMount, playerTeam) {
+  const visibleEntities = visibleEntitiesFromEntitiesAndTeam(entitiesAtMount, playerTeam);
+  const mem = readMapViewMemory(sessionId);
+  if (mem?.center && Number.isFinite(mem.zoom)) {
+    return { center: mem.center, zoom: mem.zoom, restoredFromMemory: true };
+  }
+  const sel =
+    selectedEntityIdAtMount &&
+    visibleEntities.find((s) => s.id === selectedEntityIdAtMount);
+  if (sel) {
+    return {
+      center: [sel.lat_deg, sel.lon_deg],
+      zoom: SELECTED_ENTITY_FOCUS_ZOOM,
+      restoredFromMemory: false,
+    };
+  }
+  if (visibleEntities.length > 0) {
+    return {
+      center: [visibleEntities[0].lat_deg, visibleEntities[0].lon_deg],
+      zoom: DEFAULT_MAP_ZOOM,
+      restoredFromMemory: false,
+    };
+  }
+  return {
+    center: [35.0, -40.0],
+    zoom: DEFAULT_MAP_ZOOM,
+    restoredFromMemory: false,
+  };
+}
+
+const MapView = ({
+  socket,
+  session,
+  onEntitiesUpdate,
+  selectedEntityId: selectedEntityIdProp = null,
+  onSelectedEntityIdChange,
+}) => {
   const [entities, setEntities] = useState([]);
-  const [selectedEntityId, setSelectedEntityId] = useState(null);
+  const [internalSelectedEntityId, setInternalSelectedEntityId] = useState(null);
+  const selectionControlled = typeof onSelectedEntityIdChange === 'function';
+  const selectedEntityId = selectionControlled ? selectedEntityIdProp : internalSelectedEntityId;
+  const setSelectedEntityId = selectionControlled ? onSelectedEntityIdChange : setInternalSelectedEntityId;
+
+  const [mapBootstrap] = useState(() =>
+    computeInitialMapBootstrap(
+      session?.id ?? '',
+      selectionControlled ? selectedEntityIdProp : null,
+      [],
+      String(session?.player_team ?? 'white').toLowerCase(),
+    ),
+  );
+
   const [oKeyHeld, setOKeyHeld] = useState(false);
   const [rKeyHeld, setRKeyHeld] = useState(false);
   const [planWaypoints, setPlanWaypoints] = useState([]);
@@ -135,7 +259,17 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
     b: null,
   });
   const outerRef = useRef(null);
+  const planningLayerRef = useRef(null);
+  const planWaypointsRef = useRef(planWaypoints);
+  const racetrackDraftRef = useRef(racetrackDraft);
+  const selectedEntityIdRef = useRef(selectedEntityId);
   const [outerSize, setOuterSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    planWaypointsRef.current = planWaypoints;
+    racetrackDraftRef.current = racetrackDraft;
+    selectedEntityIdRef.current = selectedEntityId;
+  });
 
   useEffect(() => {
     if (!socket || !session?.id) return;
@@ -227,14 +361,22 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
 
   useEffect(() => {
     const onEsc = (e) => {
-      if (e.key === 'Escape') {
+      if (e.key !== 'Escape') return;
+      if (isTypingInFormField()) return;
+      const hasParentPlan =
+        planWaypointsRef.current.length > 0 || racetrackDraftRef.current.phase !== 'idle';
+      if (hasParentPlan) {
         setPlanWaypoints([]);
         setRacetrackDraft({ phase: 'idle', a: null, b: null });
+        planningLayerRef.current?.clearTransientDrafts();
+        return;
       }
+      if (planningLayerRef.current?.clearTransientDrafts()) return;
+      if (selectedEntityIdRef.current) setSelectedEntityId(null);
     };
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
-  }, []);
+  }, [setSelectedEntityId]);
 
   useEffect(() => {
     setPlanWaypoints([]);
@@ -287,12 +429,14 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
           ? blueTeamEntities
           : entities;
 
+  const sessionIdForMap = session?.id ?? '';
+
   useEffect(() => {
     if (!selectedEntityId) return;
     if (!visibleEntities.some((s) => s.id === selectedEntityId)) {
       setSelectedEntityId(null);
     }
-  }, [visibleEntities, selectedEntityId]);
+  }, [visibleEntities, selectedEntityId, setSelectedEntityId]);
 
   const selectedEntity = useMemo(
     () => visibleEntities.find((s) => s.id === selectedEntityId) ?? null,
@@ -304,9 +448,6 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
     if (!Array.isArray(dp) || dp.length < 2) return null;
     return dp.map((p) => [p.lat_deg, p.lon_deg]);
   }, [selectedEntity?.display_path_deg]);
-
-  const center =
-    visibleEntities.length > 0 ? [visibleEntities[0].lat_deg, visibleEntities[0].lon_deg] : [35.0, -40.0];
 
   // Unit card size is a fixed fraction of the map height.
   const unitCardHeight = outerSize.height ? outerSize.height * 0.1 : 30;
@@ -334,14 +475,18 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
     const next = new Map();
     for (const entity of entities) {
       const entityKey = `${entity.id}:${entity.sidc}`;
+      const selected = entity.id === selectedEntityId;
       if (isMissileSidc(entity.sidc)) {
         const color = entity.allegiance === 'hostile' ? '#ef4444' : '#3b82f6';
         const heading = Number(entity.heading_deg ?? 0);
         const maskId = `missile-mask-${entity.id}`;
+        const ring = selected
+          ? 'box-shadow: 0 0 0 3px #fbbf24, 0 0 14px rgba(251,191,36,0.9); border-radius: 50%;'
+          : '';
         next.set(
           entityKey,
           L.divIcon({
-            className: 'custom-missile-icon',
+            className: selected ? 'custom-missile-icon map-entity-selected' : 'custom-missile-icon',
             html: `
               <div style="
                 color: ${color};
@@ -352,6 +497,7 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
                 justify-content: center;
                 transform: rotate(${heading}deg);
                 transform-origin: 50% 50%;
+                ${ring}
               ">
                 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 ${MISSILE_OUTLINE_PNG_W} ${MISSILE_OUTLINE_PNG_H}" aria-hidden="true">
                   <defs>
@@ -376,8 +522,8 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
                 </svg>
               </div>
             `,
-            iconSize: [32, 32],
-            iconAnchor: [16, 16],
+            iconSize: selected ? [40, 40] : [32, 32],
+            iconAnchor: selected ? [20, 20] : [16, 16],
           })
         );
       } else {
@@ -386,15 +532,99 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
           createMilSymbolIcon({
             sidc: entity.sidc,
             name: entity.name,
+            selected,
           })
         );
       }
     }
     return next;
-  }, [entities]);
+  }, [entities, selectedEntityId]);
 
   return (
     <div ref={outerRef} style={{ height: '100%', width: '100%', position: 'relative' }}>
+      {/* Map first + z-index 0 so later overlays (roster, HUD) receive clicks — otherwise the map layer sits on top and blocks selection. */}
+      <MapContainer
+        center={mapBootstrap.center}
+        zoom={mapBootstrap.zoom}
+        zoomControl={false}
+        dragging={false}
+        boxZoom={false}
+        keyboard={false}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 0,
+          height: '100%',
+          width: '100%',
+        }}
+      >
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+        />
+        <MapViewMemoryWriter sessionId={sessionIdForMap} />
+        <MapViewDeferredGeoFocus
+          fromMemory={mapBootstrap.restoredFromMemory}
+          selectedEntityId={selectedEntityId}
+          visibleEntities={visibleEntities}
+        />
+        <MapKeyboardPanLayer />
+        <MapPointerDebugLayer />
+        <MovementPlanningLayer
+          ref={planningLayerRef}
+          sessionId={session?.id}
+          socket={socket}
+          selectedEntity={selectedEntity}
+          oHeld={oKeyHeld}
+          rHeld={rKeyHeld}
+          planWaypoints={planWaypoints}
+          setPlanWaypoints={setPlanWaypoints}
+          racetrackDraft={racetrackDraft}
+          setRacetrackDraft={setRacetrackDraft}
+          onPlanCommitted={clearMovementPlan}
+        />
+        {serverActivePathPositions && (
+          <Polyline
+            positions={serverActivePathPositions}
+            pathOptions={{
+              color: '#38bdf8',
+              weight: 3,
+              opacity: 0.92,
+              dashArray: '12 8',
+            }}
+          />
+        )}
+        {visibleEntities.map((entity) => {
+          const entityKey = `${entity.id}:${entity.sidc}`;
+          const icon = markerIconsByEntityKey.get(entityKey);
+          return (
+            <Marker
+              key={entityKey}
+              position={[entity.lat_deg, entity.lon_deg]}
+              icon={icon}
+              eventHandlers={{
+                click: (e) => {
+                  mapClickDebug('marker:click:handler', {
+                    entityId: entity.id,
+                    entityKey,
+                    hasIcon: Boolean(icon),
+                    latlng: e.latlng,
+                    domTarget: e.originalEvent?.target?.tagName,
+                  });
+                  L.DomEvent.stopPropagation(e.originalEvent);
+                  setSelectedEntityId(entity.id);
+                  mapClickDebug('marker:click:setSelectedEntityId', entity.id);
+                },
+              }}
+            >
+              <Popup>
+                {entity.name} ({entity.id})
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MapContainer>
+
       <div
         style={{
           position: 'absolute',
@@ -415,14 +645,21 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
           {visibleEntities.map((s) => s.id).join(', ')}
         </div>
         <div style={{ marginTop: 8, opacity: 0.9, lineHeight: 1.4 }}>
-          <strong>Movement plan</strong>: select a movable unit →{' '}
-          <strong>right-click</strong> to add waypoints (0–n) → then{' '}
+          <strong>Map</strong>: <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>W</kbd>
+          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>A</kbd>
+          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>S</kbd>
+          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>D</kbd> pan (no mouse
+          drag). Scroll wheel zooms.
+        </div>
+        <div style={{ marginTop: 6, opacity: 0.9, lineHeight: 1.4 }}>
+          <strong>Movement plan</strong>: select a movable unit → <strong>right-click</strong> waypoints →{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>O</kbd>
-          + left-drag = orbit (center &amp; radius; east = CW) or{' '}
+          + drag orbit or{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>R</kbd>
-          + click A → click B → drag from B for racetrack turn radius.{' '}
+          + A → B → drag radius.{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd> clears
-          waypoints. Preview in light green; ETA on Sync Matrix tab.
+          plan / preview first; another <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd>{' '}
+          deselects.
         </div>
         {planWaypoints.length > 0 && (
           <div style={{ marginTop: 4, opacity: 0.85 }}>
@@ -459,6 +696,7 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
           gap: redUnitGap,
           alignItems: 'flex-end',
           pointerEvents: 'none',
+          isolation: 'isolate',
         }}
       >
         {visibleRedTeamEntities.map((entity) => {
@@ -469,10 +707,14 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
               key={entity.id}
               role="button"
               tabIndex={0}
-              onClick={() => setSelectedEntityId(entity.id)}
+              onClick={() => {
+                mapClickDebug('roster:red:click', entity.id);
+                setSelectedEntityId(entity.id);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
+                  mapClickDebug('roster:red:keyboard', entity.id);
                   setSelectedEntityId(entity.id);
                 }
               }}
@@ -487,12 +729,19 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
                 padding: 0,
                 width: redUnitCardWidth,
                 height: redUnitCardHeight,
-                borderRadius: 0,
+                borderRadius: 4,
                 background: 'rgba(220, 38, 38, 0.35)',
                 border:
                   selectedEntityId === entity.id
-                    ? '2px solid #fbbf24'
+                    ? '3px solid #fbbf24'
                     : '1px solid rgba(220, 38, 38, 0.35)',
+                boxShadow:
+                  selectedEntityId === entity.id
+                    ? '0 0 0 2px rgba(251,191,36,0.5), 0 4px 20px rgba(251,191,36,0.35)'
+                    : undefined,
+                transform: selectedEntityId === entity.id ? 'scale(1.08)' : undefined,
+                zIndex: selectedEntityId === entity.id ? 3 : 1,
+                transition: 'transform 0.12s ease, box-shadow 0.12s ease',
                 color: 'white',
                 boxSizing: 'border-box',
                 textAlign: 'center',
@@ -558,6 +807,7 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
             gap: blueUnitGap,
             alignItems: 'flex-start',
             pointerEvents: 'none',
+            isolation: 'isolate',
           }}
         >
           {visibleBlueTeamEntities.map((entity) => {
@@ -568,10 +818,14 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
                 key={entity.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => setSelectedEntityId(entity.id)}
+                onClick={() => {
+                  mapClickDebug('roster:blue:click', entity.id);
+                  setSelectedEntityId(entity.id);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
+                    mapClickDebug('roster:blue:keyboard', entity.id);
                     setSelectedEntityId(entity.id);
                   }
                 }}
@@ -586,12 +840,19 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
                   padding: 0,
                   width: blueUnitCardWidth,
                   height: blueUnitCardHeight,
-                  borderRadius: 0,
+                  borderRadius: 4,
                   background: 'rgba(59, 130, 246, 0.35)',
                   border:
                     selectedEntityId === entity.id
-                      ? '2px solid #fbbf24'
+                      ? '3px solid #fbbf24'
                       : '1px solid rgba(59, 130, 246, 0.35)',
+                  boxShadow:
+                    selectedEntityId === entity.id
+                      ? '0 0 0 2px rgba(251,191,36,0.5), 0 4px 20px rgba(251,191,36,0.35)'
+                      : undefined,
+                  transform: selectedEntityId === entity.id ? 'scale(1.08)' : undefined,
+                  zIndex: selectedEntityId === entity.id ? 3 : 1,
+                  transition: 'transform 0.12s ease, box-shadow 0.12s ease',
                   color: 'white',
                   boxSizing: 'border-box',
                   textAlign: 'center',
@@ -643,62 +904,6 @@ const MapView = ({ socket, session, onEntitiesUpdate }) => {
           })}
         </div>
       )}
-
-      <MapContainer
-        center={center}
-        zoom={4}
-        zoomControl={false}
-        style={{ height: '100%', width: '100%' }}
-      >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
-        />
-        <MovementPlanningLayer
-          sessionId={session?.id}
-          socket={socket}
-          selectedEntity={selectedEntity}
-          oHeld={oKeyHeld}
-          rHeld={rKeyHeld}
-          planWaypoints={planWaypoints}
-          setPlanWaypoints={setPlanWaypoints}
-          racetrackDraft={racetrackDraft}
-          setRacetrackDraft={setRacetrackDraft}
-          onPlanCommitted={clearMovementPlan}
-        />
-        {serverActivePathPositions && (
-          <Polyline
-            positions={serverActivePathPositions}
-            pathOptions={{
-              color: '#38bdf8',
-              weight: 3,
-              opacity: 0.92,
-              dashArray: '12 8',
-            }}
-          />
-        )}
-        {visibleEntities.map((entity) => {
-          const entityKey = `${entity.id}:${entity.sidc}`;
-          const icon = markerIconsByEntityKey.get(entityKey);
-          return (
-            <Marker
-              key={entityKey}
-              position={[entity.lat_deg, entity.lon_deg]}
-              icon={icon}
-              eventHandlers={{
-                click: (e) => {
-                  L.DomEvent.stopPropagation(e.originalEvent);
-                  setSelectedEntityId(entity.id);
-                },
-              }}
-            >
-              <Popup>
-                {entity.name} ({entity.id})
-              </Popup>
-            </Marker>
-          );
-        })}
-      </MapContainer>
     </div>
   );
 };
