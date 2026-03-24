@@ -23,8 +23,15 @@ function App() {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [simTiming, setSimTiming] = useState(null);
   const [worldEntities, setWorldEntities] = useState([]);
+  /** Satellite FoV enter/leave (from `world_snapshot.space_coverage_events`). */
+  const [spaceCoverageFeed, setSpaceCoverageFeed] = useState([]);
   /** Survives tab switches so Map tab can restore focus around the selected unit. */
   const [mapSelectedEntityId, setMapSelectedEntityId] = useState(null);
+
+  const handleSpaceCoverageEvents = useCallback((events) => {
+    if (!Array.isArray(events) || events.length === 0) return;
+    setSpaceCoverageFeed((prev) => [...events, ...prev].slice(0, 48));
+  }, []);
 
   const handleSessionEstablished = useCallback((sessionData) => {
     setSession(sessionData);
@@ -44,6 +51,10 @@ function App() {
 
   useEffect(() => {
     if (!session) setWorldEntities([]);
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) setSpaceCoverageFeed([]);
   }, [session]);
 
   useEffect(() => {
@@ -242,12 +253,17 @@ function App() {
             socket={socket}
             session={session}
             onEntitiesUpdate={setWorldEntities}
+            onSpaceCoverageEvents={handleSpaceCoverageEvents}
             selectedEntityId={mapSelectedEntityId}
             onSelectedEntityIdChange={setMapSelectedEntityId}
           />
         </Tab>
         <Tab label="Sync Matrix">
-          <SyncMatrixView entities={worldEntities} simTiming={simTiming} />
+          <SyncMatrixView
+            entities={worldEntities}
+            simTiming={simTiming}
+            spaceCoverageFeed={spaceCoverageFeed}
+          />
         </Tab>
         <Tab label="System View">
           <SystemView />

@@ -1,0 +1,29 @@
+- id: example-satellite
+  name: Example LEO Satellite
+  allegiance: friendly
+  components:
+    - kind: transform
+      data:
+        lat_deg: 0.0
+        lon_deg: 0.0
+        hae_m: 400000.0
+        heading_deg: 0.0
+    - kind: space_orbit
+      data:
+        line1: "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992"
+        line2: "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
+        fov_half_angle_deg: 2.5
+        hide_map_marker: true
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: air
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110103
+          modifier_one: code_00
+          modifier_two: code_00

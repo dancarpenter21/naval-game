@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, Polygon, Pane, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
@@ -10,6 +10,7 @@ import MapKeyboardPanLayer from './MapKeyboardPanLayer';
 import MapPointerDebugLayer from './MapPointerDebugLayer';
 import { mapClickDebug } from '../utils/mapClickDebug';
 import { readMapViewMemory, writeMapViewMemory } from '../map/mapViewMemory';
+import { geodesicDirect } from '../geo/wgs84Geodesic';
 
 /** Zoom when re-opening the map with a unit already selected (no saved view). */
 const SELECTED_ENTITY_FOCUS_ZOOM = 7;
@@ -147,6 +148,15 @@ const LatLonDegSchema = z.object({
   lon_deg: z.number(),
 });
 
+const SpaceSnapshotSchema = z.object({
+  line1: z.string(),
+  line2: z.string(),
+  fov_half_angle_deg: z.number(),
+  footprint_radius_m: z.number(),
+  ground_track_deg: z.array(LatLonDegSchema),
+  future_footprint_deg: z.array(LatLonDegSchema),
+});
+
 const EntityDtoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -157,6 +167,8 @@ const EntityDtoSchema = z.object({
   heading_deg: z.number(),
   sidc: z.string(),
   movable: z.boolean().optional(),
+  hide_map_marker: z.boolean().optional(),
+  space: SpaceSnapshotSchema.optional().nullable(),
   station_eta_sim_s: z.number().optional().nullable(),
   station_progress: z.number().optional().nullable(),
   display_path_deg: z.array(LatLonDegSchema).optional().nullable(),
@@ -164,12 +176,20 @@ const EntityDtoSchema = z.object({
 
 // Enforce that the payload is an object with an `entities` array.
 // We'll validate each element separately so malformed entries don't break rendering.
+const SpaceCoverageEventSchema = z.object({
+  kind: z.string(),
+  satellite_id: z.string(),
+  asset_id: z.string(),
+  sim_time_utc: z.string(),
+});
+
 const WorldSnapshotDtoShapeSchema = z.object({
   entities: z.array(z.unknown()),
   sim_elapsed_s: z.number().optional(),
   sim_time_utc: z.string().optional(),
   wall_dt_s: z.number().optional(),
   time_scale: z.number().optional(),
+  space_coverage_events: z.array(SpaceCoverageEventSchema).optional(),
 });
 
 function isTypingInFormField() {
@@ -228,10 +248,51 @@ function computeInitialMapBootstrap(sessionId, selectedEntityIdAtMount, entities
   };
 }
 
+/**
+ * World outer ring + geodesic inner ring for FoV "flashlight" (Leaflet [lat, lng]).
+ * Inner ring matches WGS84 geodesic distance (same convention as server / `Circle` radius in m).
+ * Outer is clockwise; inner is counter-clockwise so SVG evenodd/nonzero both subtract the hole.
+ */
+function worldShadeWithHoleRing(centerLat, centerLon, footprintRadiusM) {
+  const r = Math.min(Math.max(Number(footprintRadiusM) || 0, 15_000), 5_000_000);
+  const outer = [
+    [-89.9, -180],
+    [-89.9, 180],
+    [89.9, 180],
+    [89.9, -180],
+    [-89.9, -180],
+  ];
+  const steps = 72;
+  const inner = [];
+  for (let i = 0; i < steps; i++) {
+    const brng = (i / steps) * 360;
+    const { latDeg, lonDeg } = geodesicDirect(centerLat, centerLon, brng, r);
+    inner.push([latDeg, lonDeg]);
+  }
+  return [outer, inner];
+}
+
+/** Small nadir “eyeball” for selected satellite FoV center (not a SIDC / unit symbol). */
+function createSatelliteNadirEyeDivIcon() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+  <circle cx="13" cy="13" r="11.5" fill="rgba(15,23,42,0.94)" stroke="#86efac" stroke-width="1.2"/>
+  <ellipse cx="13" cy="13" rx="8.5" ry="5" fill="none" stroke="#a7f3d0" stroke-width="1.1"/>
+  <circle cx="13" cy="13" r="3.25" fill="#38bdf8"/>
+  <circle cx="14.4" cy="11.7" r="0.95" fill="#f8fafc" opacity="0.92"/>
+</svg>`;
+  return L.divIcon({
+    className: 'satellite-nadir-eye-marker',
+    html: `<div title="Nadir — approximate center of field of view" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.5));pointer-events:none;">${svg}</div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  });
+}
+
 const MapView = ({
   socket,
   session,
   onEntitiesUpdate,
+  onSpaceCoverageEvents,
   selectedEntityId: selectedEntityIdProp = null,
   onSelectedEntityIdChange,
 }) => {
@@ -264,6 +325,8 @@ const MapView = ({
   const racetrackDraftRef = useRef(racetrackDraft);
   const selectedEntityIdRef = useRef(selectedEntityId);
   const [outerSize, setOuterSize] = useState({ width: 0, height: 0 });
+
+  const satelliteNadirEyeIcon = useMemo(() => createSatelliteNadirEyeDivIcon(), []);
 
   useEffect(() => {
     planWaypointsRef.current = planWaypoints;
@@ -302,7 +365,13 @@ const MapView = ({
         validEntities.push({
           ...row,
           movable: row.movable !== false,
+          hide_map_marker: row.hide_map_marker === true,
         });
+      }
+
+      const cov = topLevel.data.space_coverage_events;
+      if (Array.isArray(cov) && cov.length > 0) {
+        onSpaceCoverageEvents?.(cov);
       }
 
       console.log('[world_snapshot] received', {
@@ -331,7 +400,7 @@ const MapView = ({
     return () => {
       socket.off('world_snapshot', handleWorldSnapshot);
     };
-  }, [socket, session?.id, onEntitiesUpdate]);
+  }, [socket, session?.id, onEntitiesUpdate, onSpaceCoverageEvents]);
 
   useEffect(() => {
     if (!socket) return;
@@ -448,6 +517,31 @@ const MapView = ({
     if (!Array.isArray(dp) || dp.length < 2) return null;
     return dp.map((p) => [p.lat_deg, p.lon_deg]);
   }, [selectedEntity?.display_path_deg]);
+
+  const satelliteSelectionOverlays = useMemo(() => {
+    const sp = selectedEntity?.space;
+    if (!sp || typeof sp.footprint_radius_m !== 'number') return null;
+    const lat = selectedEntity.lat_deg;
+    const lon = selectedEntity.lon_deg;
+    const footprintRadiusM = Math.min(
+      Math.max(sp.footprint_radius_m, 15_000),
+      5_000_000,
+    );
+    const rings = worldShadeWithHoleRing(lat, lon, footprintRadiusM);
+    const groundTrack = Array.isArray(sp.ground_track_deg)
+      ? sp.ground_track_deg.map((p) => [p.lat_deg, p.lon_deg])
+      : [];
+    const future = Array.isArray(sp.future_footprint_deg)
+      ? sp.future_footprint_deg.map((p) => [p.lat_deg, p.lon_deg])
+      : [];
+    return {
+      rings,
+      center: [lat, lon],
+      footprintRadiusM,
+      groundTrack,
+      future,
+    };
+  }, [selectedEntity]);
 
   // Unit card size is a fixed fraction of the map height.
   const unitCardHeight = outerSize.height ? outerSize.height * 0.1 : 30;
@@ -594,7 +688,57 @@ const MapView = ({
             }}
           />
         )}
-        {visibleEntities.map((entity) => {
+        {satelliteSelectionOverlays && (
+          <Pane name="satelliteFov" style={{ zIndex: 380 }}>
+            <Polygon
+              positions={satelliteSelectionOverlays.rings}
+              pathOptions={{
+                stroke: false,
+                fillColor: '#020617',
+                fillOpacity: 0.58,
+                // Leaflet default is evenodd; keep explicit for SVG hole subtraction.
+                fillRule: 'evenodd',
+                interactive: false,
+              }}
+            />
+            <Circle
+              center={satelliteSelectionOverlays.center}
+              radius={satelliteSelectionOverlays.footprintRadiusM}
+              pathOptions={{
+                color: '#86efac',
+                weight: 2,
+                opacity: 0.95,
+                fillColor: '#86efac',
+                fillOpacity: 0.14,
+              }}
+            />
+            {satelliteSelectionOverlays.groundTrack.length > 1 && (
+              <Polyline
+                positions={satelliteSelectionOverlays.groundTrack}
+                pathOptions={{ color: '#22d3ee', weight: 2, opacity: 0.9 }}
+              />
+            )}
+            {satelliteSelectionOverlays.future.length > 1 && (
+              <Polyline
+                positions={satelliteSelectionOverlays.future}
+                pathOptions={{
+                  color: '#fbbf24',
+                  weight: 2,
+                  opacity: 0.4,
+                  dashArray: '10 12',
+                }}
+              />
+            )}
+            <Marker
+              position={satelliteSelectionOverlays.center}
+              icon={satelliteNadirEyeIcon}
+              interactive={false}
+              keyboard={false}
+              zIndexOffset={800}
+            />
+          </Pane>
+        )}
+        {visibleEntities.filter((e) => !e.hide_map_marker).map((entity) => {
           const entityKey = `${entity.id}:${entity.sidc}`;
           const icon = markerIconsByEntityKey.get(entityKey);
           return (

@@ -11,6 +11,9 @@ fn wgs84() -> &'static Geodesic {
     G.get_or_init(Geodesic::wgs84)
 }
 
+/// WGS84 semi-major axis (m).
+pub const WGS84_A_M: f64 = 6378137.0;
+
 /// Geodesic distance between two WGS84 positions (meters).
 #[inline]
 pub fn geodesic_distance_m(lat1_deg: f64, lon1_deg: f64, lat2_deg: f64, lon2_deg: f64) -> f64 {
