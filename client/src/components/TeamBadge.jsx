@@ -1,3 +1,5 @@
+import './TeamBadge.css';
+
 const TEAM_BADGE = {
   blue: {
     title: 'Blue team',
@@ -16,11 +18,12 @@ const TEAM_BADGE = {
   },
 };
 
-function TeamShieldIcon({ color }) {
+function TeamShieldIcon({ color, size = 28 }) {
   return (
     <svg
-      width={28}
-      height={28}
+      className="team-badge__shield"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       aria-hidden
       style={{ flexShrink: 0 }}
@@ -32,9 +35,9 @@ function TeamShieldIcon({ color }) {
 
 /**
  * Shows which team the player is on (blue / red / white cell).
- * Sits in the session overlay row next to {@link SimulationSpeedDial}.
+ * Use `compact` for the session chat panel header.
  */
-export default function TeamBadge({ session }) {
+export default function TeamBadge({ session, compact = false }) {
   if (!session?.id) return null;
 
   const playerTeam = String(session.player_team ?? 'white').toLowerCase();
@@ -42,27 +45,15 @@ export default function TeamBadge({ session }) {
 
   return (
     <div
-      className="team-badge"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '8px 12px',
-        borderRadius: 8,
-        background: 'rgba(0,0,0,0.72)',
-        color: '#fff',
-        borderLeft: `4px solid ${teamBadge.accent}`,
-        boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
-        pointerEvents: 'none',
-        maxWidth: 220,
-      }}
+      className={`team-badge ${compact ? 'team-badge--compact' : ''}`}
+      style={compact ? undefined : { borderLeft: `4px solid ${teamBadge.accent}` }}
       role="status"
       aria-label={`Your team: ${teamBadge.title}`}
     >
-      <TeamShieldIcon color={teamBadge.accent} />
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.2 }}>{teamBadge.title}</div>
-        <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>{teamBadge.subtitle}</div>
+      <TeamShieldIcon color={teamBadge.accent} size={compact ? 22 : 28} />
+      <div className="team-badge__text">
+        <div className="team-badge__title">{teamBadge.title}</div>
+        <div className="team-badge__subtitle">{teamBadge.subtitle}</div>
       </div>
     </div>
   );

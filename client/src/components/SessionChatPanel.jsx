@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
+import TeamBadge from './TeamBadge';
 import './SessionChatPanel.css';
 
 const ChatMessageSchema = z.object({
@@ -37,6 +38,11 @@ export default function SessionChatPanel({ socket, session, onPlayersList }) {
   const listEndRef = useRef(null);
 
   const sessionId = session?.id;
+  const playerTeam = String(session?.player_team ?? 'white').toLowerCase();
+  const teamHeaderMod =
+    playerTeam === 'blue' || playerTeam === 'red' || playerTeam === 'white'
+      ? `session-chat-panel__header--team-${playerTeam}`
+      : 'session-chat-panel__header--team-white';
 
   useEffect(() => {
     setChatChannel('all');
@@ -113,8 +119,13 @@ export default function SessionChatPanel({ socket, session, onPlayersList }) {
   if (minimized) {
     return (
       <div className="session-chat-panel session-chat-panel--minimized">
-        <div className="session-chat-panel__header">
-          <span className="session-chat-panel__title">Chat & players</span>
+        <div className={`session-chat-panel__header ${teamHeaderMod}`}>
+          <div className="session-chat-panel__header-title-row">
+            <TeamBadge session={session} compact />
+            <span className="session-chat-panel__title session-chat-panel__title--minimized">
+              Chat & players
+            </span>
+          </div>
           <div className="session-chat-panel__header-actions">
             <button
               type="button"
@@ -133,8 +144,10 @@ export default function SessionChatPanel({ socket, session, onPlayersList }) {
 
   return (
     <div className="session-chat-panel">
-      <div className="session-chat-panel__header">
-        <span className="session-chat-panel__title">Session</span>
+      <div className={`session-chat-panel__header ${teamHeaderMod}`}>
+        <div className="session-chat-panel__header-title-row">
+          <TeamBadge session={session} compact />
+        </div>
         <div className="session-chat-panel__header-actions">
           <button
             type="button"

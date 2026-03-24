@@ -52,18 +52,29 @@ body, html {
   z-index: 1999;
 }
 
-/* Team badge + simulation clock dial (all tabs) */
-/* Team badge anchored top-left; simulation dial stacked directly below */
-.session-top-overlay {
+/* Chat panel + (white only) simulation speed dial — bottom dock, all tabs */
+.session-bottom-dock {
   position: absolute;
   z-index: 1500;
-  top: 10px;
-  left: 10px;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  align-content: flex-end;
+  justify-content: flex-start;
+  gap: 12px;
   pointer-events: none;
+}
+
+.session-bottom-dock > * {
+  pointer-events: auto;
+}
+
+.session-bottom-dock--with-timer .session-chat-panel {
+  max-width: min(520px, calc(100vw - 160px));
 }
 
 .hamburger-menu {

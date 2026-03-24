@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import io from 'socket.io-client';
 import Tabs, { Tab } from './components/Tabs';
 import MapView from './components/MapView';
-import TeamBadge from './components/TeamBadge';
 import SimulationSpeedDial from './components/SimulationSpeedDial';
 import SessionChatPanel from './components/SessionChatPanel';
 import SyncMatrixView from './components/SyncMatrixView';
@@ -251,13 +250,18 @@ function App() {
       )}
       <Tabs
         contentOverlay={
-          <>
-            <div className="session-top-overlay">
-              <TeamBadge session={session} />
-              <SimulationSpeedDial socket={socket} session={session} simTiming={simTiming} />
+          session ? (
+            <div
+              className={`session-bottom-dock ${
+                session.player_team === 'white' ? 'session-bottom-dock--with-timer' : ''
+              }`}
+            >
+              <SessionChatPanel socket={socket} session={session} onPlayersList={handlePlayersList} />
+              {session.player_team === 'white' && (
+                <SimulationSpeedDial socket={socket} session={session} simTiming={simTiming} />
+              )}
             </div>
-            <SessionChatPanel socket={socket} session={session} onPlayersList={handlePlayersList} />
-          </>
+          ) : null
         }
       >
         <Tab label="Map">
