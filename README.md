@@ -74,6 +74,8 @@ Cypress loads **`http://nginx`**, while Vite’s default HMR WebSocket targets *
 
 Specs live in **`client/cypress/e2e/`**. Config: **`client/cypress.config.js`**. **`CYPRESS_baseUrl`** is set to **`http://nginx`** inside Compose.
 
+**Chat commands:** **`client/cypress/e2e/chat-commands.cy.js`** exercises leading `/all`, `/team`, team-color aliases, and white-cell coordination paths. The parser lives in **`client/src/chatParse.js`** (imported by the chat UI); **`cypress.config.js`** registers a **`cy.task`** so the same function runs in Node for table-style assertions without a second browser.
+
 GitHub Actions: **`.github/workflows/e2e.yml`** uses the same two `-f` files (no host install).
 
 ## Player name (chat & session roster)

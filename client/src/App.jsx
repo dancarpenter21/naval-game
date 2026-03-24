@@ -251,16 +251,16 @@ function App() {
       <Tabs
         contentOverlay={
           session ? (
-            <div
-              className={`session-bottom-dock ${
-                session.player_team === 'white' ? 'session-bottom-dock--with-timer' : ''
-              }`}
-            >
-              <SessionChatPanel socket={socket} session={session} onPlayersList={handlePlayersList} />
+            <>
               {session.player_team === 'white' && (
-                <SimulationSpeedDial socket={socket} session={session} simTiming={simTiming} />
+                <div className="session-sim-timing-wrap">
+                  <SimulationSpeedDial socket={socket} session={session} simTiming={simTiming} />
+                </div>
               )}
-            </div>
+              <div className="session-bottom-dock">
+                <SessionChatPanel socket={socket} session={session} onPlayersList={handlePlayersList} />
+              </div>
+            </>
           ) : null
         }
       >

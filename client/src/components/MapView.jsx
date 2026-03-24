@@ -773,14 +773,16 @@ const MapView = ({
         style={{
           position: 'absolute',
           zIndex: 1000,
-          top: 10,
-          right: 10,
+          bottom: 12,
+          right: 12,
           background: 'rgba(0,0,0,0.65)',
           color: 'white',
           padding: '8px 10px',
           borderRadius: 6,
           fontSize: 12,
-          maxWidth: 320,
+          maxWidth: 'min(360px, calc(100vw - 24px))',
+          maxHeight: 'min(42vh, 320px)',
+          overflowY: 'auto',
           pointerEvents: 'none',
         }}
       >

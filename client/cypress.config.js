@@ -3,6 +3,8 @@
  * Must be ESM: client package.json has "type": "module".
  * @type {import('cypress').Config}
  */
+import { parseLeadingChatCommand } from './src/chatParse.js';
+
 export default {
   e2e: {
     baseUrl: process.env.CYPRESS_baseUrl || 'http://localhost:8080',
@@ -11,5 +13,12 @@ export default {
     video: false,
     screenshotOnRunFailure: true,
     defaultCommandTimeout: 20000,
+    setupNodeEvents(on) {
+      on('task', {
+        chatParseLeading({ text, playerTeam, defaultChannel }) {
+          return parseLeadingChatCommand(text, playerTeam, defaultChannel);
+        },
+      });
+    },
   },
 };

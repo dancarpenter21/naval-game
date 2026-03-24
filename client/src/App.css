@@ -52,12 +52,24 @@ body, html {
   z-index: 1999;
 }
 
-/* Chat panel + (white only) simulation speed dial — bottom dock, all tabs */
+/* White cell only: simulation speed dial — top right (below hamburger), all tabs */
+.session-sim-timing-wrap {
+  position: absolute;
+  z-index: 1500;
+  top: 58px;
+  right: 12px;
+  pointer-events: none;
+}
+
+.session-sim-timing-wrap > * {
+  pointer-events: auto;
+}
+
+/* Chat panel — bottom left, all tabs */
 .session-bottom-dock {
   position: absolute;
   z-index: 1500;
   left: 12px;
-  right: 12px;
   bottom: 12px;
   display: flex;
   flex-direction: row;
@@ -67,14 +79,11 @@ body, html {
   justify-content: flex-start;
   gap: 12px;
   pointer-events: none;
+  max-width: calc(100vw - 24px);
 }
 
 .session-bottom-dock > * {
   pointer-events: auto;
-}
-
-.session-bottom-dock--with-timer .session-chat-panel {
-  max-width: min(520px, calc(100vw - 160px));
 }
 
 .hamburger-menu {

@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
+import { parseLeadingChatCommand } from '../chatParse.js';
 import TeamBadge from './TeamBadge';
 import './SessionChatPanel.css';
 
 const ChatMessageSchema = z.object({
   from: z.string(),
   text: z.string(),
-  scope: z.enum(['all', 'team']).optional().default('all'),
+  scope: z
+    .enum(['all', 'team', 'white_red', 'white_blue', 'team_white'])
+    .optional()
+    .default('all'),
 });
 
 const RoomPlayerSchema = z.object({
@@ -25,7 +29,52 @@ const TEAM_LABEL = {
   white: 'White cell',
 };
 
-/** @typedef {'all' | 'team'} ChatChannel */
+/** @typedef {'all' | 'team' | 'white_red' | 'white_blue' | 'team_white'} ChatChannel */
+
+function scopeBadge(scope) {
+  switch (scope) {
+    case 'team':
+      return { label: '[Team]', title: 'Your team only' };
+    case 'white_red':
+      return { label: '[W+R]', title: 'White cell + Red team' };
+    case 'white_blue':
+      return { label: '[W+B]', title: 'White cell + Blue team' };
+    case 'team_white':
+      return { label: '[+W]', title: 'Your team + White cell' };
+    default:
+      return { label: '[All]', title: 'Everyone' };
+  }
+}
+
+function channelPillLabel(channel) {
+  switch (channel) {
+    case 'team':
+      return 'Your team only';
+    case 'white_red':
+      return 'White + Red';
+    case 'white_blue':
+      return 'White + Blue';
+    case 'team_white':
+      return 'Team + White cell';
+    default:
+      return 'Everyone';
+  }
+}
+
+function channelPlaceholder(channel) {
+  switch (channel) {
+    case 'team':
+      return 'Team message…';
+    case 'white_red':
+      return 'Message white + red…';
+    case 'white_blue':
+      return 'Message white + blue…';
+    case 'team_white':
+      return 'Message your team + white cell…';
+    default:
+      return 'Message everyone…';
+  }
+}
 
 export default function SessionChatPanel({ socket, session, onPlayersList }) {
   const [minimized, setMinimized] = useState(false);
@@ -94,25 +143,22 @@ export default function SessionChatPanel({ socket, session, onPlayersList }) {
     const text = draft.trim();
     if (!text || !socket || !sessionId) return;
 
-    const lower = text.toLowerCase();
-    if (lower === '/all') {
-      setChatChannel('all');
-      setDraft('');
-      return;
+    const parsed = parseLeadingChatCommand(text, playerTeam, chatChannel);
+    if (parsed.channel !== null) {
+      setChatChannel(parsed.channel);
     }
-    if (lower === '/team') {
-      setChatChannel('team');
+    if (!parsed.emitMessage) {
       setDraft('');
       return;
     }
 
     socket.emit('session_chat', {
       session_id: sessionId,
-      text,
-      scope: chatChannel,
+      text: parsed.body,
+      scope: parsed.scope,
     });
     setDraft('');
-  }, [draft, socket, sessionId, chatChannel]);
+  }, [draft, socket, sessionId, chatChannel, playerTeam]);
 
   if (!sessionId) return null;
 
@@ -185,19 +231,27 @@ export default function SessionChatPanel({ socket, session, onPlayersList }) {
       <div className="session-chat-panel__body">
         {panelTab === 'chat' && (
           <>
-            <div className="session-chat-panel__messages" role="log" aria-live="polite">
+            <div
+              className="session-chat-panel__messages"
+              role="log"
+              aria-live="polite"
+              data-testid="chat-messages"
+            >
               {messages.length === 0 && (
                 <div style={{ opacity: 0.5, fontSize: 11 }}>No messages yet.</div>
               )}
               {messages.map((m, i) => {
                 const scope = m.scope ?? 'all';
+                const badge = scopeBadge(scope);
                 return (
                   <div
                     key={`${m.from}-${i}-${m.text.slice(0, 20)}`}
+                    data-testid="chat-message"
+                    data-chat-scope={scope}
                     className={`session-chat-panel__msg session-chat-panel__msg--${scope}`}
                   >
-                    <span className="session-chat-panel__msg-scope" title={scope === 'team' ? 'Team chat' : 'Everyone'}>
-                      {scope === 'team' ? '[Team]' : '[All]'}
+                    <span className="session-chat-panel__msg-scope" title={badge.title}>
+                      {badge.label}
                     </span>
                     <span className="session-chat-panel__msg-from">{m.from}:</span>
                     <span>{m.text}</span>
@@ -208,17 +262,29 @@ export default function SessionChatPanel({ socket, session, onPlayersList }) {
             </div>
             <div className="session-chat-panel__channel-bar" aria-live="polite">
               <span className="session-chat-panel__channel-label">Sending to:</span>
-              <span className={`session-chat-panel__channel-pill session-chat-panel__channel-pill--${chatChannel}`}>
-                {chatChannel === 'team' ? 'Your team only' : 'Everyone'}
+              <span
+                data-testid="chat-channel-pill"
+                data-chat-channel={chatChannel}
+                className={`session-chat-panel__channel-pill session-chat-panel__channel-pill--${chatChannel}`}
+              >
+                {channelPillLabel(chatChannel)}
               </span>
-              <span className="session-chat-panel__channel-hint">Type /all or /team to switch</span>
+              <span className="session-chat-panel__channel-hint">
+                {playerTeam === 'blue'
+                  ? '/all /team /blue — /blue = team · /white = your team + white cell'
+                  : playerTeam === 'red'
+                    ? '/all /team /red — /red = team · /white = your team + white cell'
+                    : playerTeam === 'white'
+                      ? '/all /team /white for white cell only · /red or /blue to reach that side + white cell'
+                      : '/all or /team to switch — add text after a space to send in that mode'}
+              </span>
             </div>
             <div className="session-chat-panel__input-row">
               <input
                 className="session-chat-panel__input"
                 data-testid="chat-message-input"
                 type="text"
-                placeholder={chatChannel === 'team' ? 'Team message…' : 'Message everyone…'}
+                placeholder={channelPlaceholder(chatChannel)}
                 value={draft}
                 maxLength={2000}
                 onChange={(e) => setDraft(e.target.value)}
