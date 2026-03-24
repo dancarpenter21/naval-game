@@ -257,6 +257,22 @@ fn player_may_command_unit(team: PlayerTeam, allegiance: &Allegiance) -> bool {
     }
 }
 
+/// Deliver chat to a peer. `io.to(socket_id)` does not reliably deliver to the sender's own socket in
+/// socketioxide, so when `peer_id` is the current connection we emit on [`SocketRef`] directly.
+fn emit_chat_to_peer(
+    io: &SocketIo,
+    socket: &SocketRef,
+    peer_id: &str,
+    sock_key: &str,
+    msg: ChatMessageDto,
+) {
+    if peer_id == sock_key {
+        socket.emit("chat_message", msg).ok();
+    } else {
+        io.to(peer_id.to_string()).emit("chat_message", msg).ok();
+    }
+}
+
 const MAX_MOVEMENT_WAYPOINTS: usize = 48;
 
 fn validate_waypoint_path(waypoints: &[(f64, f64)]) -> Result<(), String> {
@@ -1348,6 +1364,18 @@ fn on_connect(
                 .filter(|(_, t)| **t == sender_team)
                 .map(|(id, _)| id.clone())
                 .collect();
+            let white_red_peer_ids: Vec<String> = session
+                .player_teams
+                .iter()
+                .filter(|(_, t)| **t == PlayerTeam::White || **t == PlayerTeam::Red)
+                .map(|(id, _)| id.clone())
+                .collect();
+            let white_blue_peer_ids: Vec<String> = session
+                .player_teams
+                .iter()
+                .filter(|(_, t)| **t == PlayerTeam::White || **t == PlayerTeam::Blue)
+                .map(|(id, _)| id.clone())
+                .collect();
             drop(store_lock);
 
             let msg = ChatMessageDto { from, text, scope };
@@ -1357,7 +1385,38 @@ fn on_connect(
                 }
                 ChatScopeDto::Team => {
                     for peer_id in team_peer_ids {
-                        io.to(peer_id).emit("chat_message", msg.clone()).ok();
+                        emit_chat_to_peer(&io, &socket, &peer_id, &sock_key, msg.clone());
+                    }
+                }
+                ChatScopeDto::WhiteRed => {
+                    if sender_team != PlayerTeam::White {
+                        return;
+                    }
+                    for peer_id in white_red_peer_ids {
+                        emit_chat_to_peer(&io, &socket, &peer_id, &sock_key, msg.clone());
+                    }
+                }
+                ChatScopeDto::WhiteBlue => {
+                    if sender_team != PlayerTeam::White {
+                        return;
+                    }
+                    for peer_id in white_blue_peer_ids {
+                        emit_chat_to_peer(&io, &socket, &peer_id, &sock_key, msg.clone());
+                    }
+                }
+                ChatScopeDto::TeamWhite => {
+                    match sender_team {
+                        PlayerTeam::Red => {
+                            for peer_id in white_red_peer_ids {
+                                emit_chat_to_peer(&io, &socket, &peer_id, &sock_key, msg.clone());
+                            }
+                        }
+                        PlayerTeam::Blue => {
+                            for peer_id in white_blue_peer_ids {
+                                emit_chat_to_peer(&io, &socket, &peer_id, &sock_key, msg.clone());
+                            }
+                        }
+                        PlayerTeam::White => return,
                     }
                 }
             }

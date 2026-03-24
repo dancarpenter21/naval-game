@@ -1,10 +1,12 @@
 .session-chat-panel {
-  position: absolute;
+  position: relative;
   z-index: 1500;
-  left: 12px;
-  bottom: 12px;
-  width: min(340px, calc(100vw - 24px));
-  max-height: min(320px, 42vh);
+  flex: 1 1 420px;
+  min-width: 0;
+  width: 100%;
+  max-width: min(640px, calc(100vw - 24px));
+  /* Fixed height so switching Chat ↔ Players does not resize the shell */
+  height: min(420px, 52vh);
   display: flex;
   flex-direction: column;
   border-radius: 10px;
@@ -16,9 +18,11 @@
 }
 
 .session-chat-panel--minimized {
+  height: auto;
   max-height: none;
   width: auto;
   min-width: 0;
+  flex: 0 0 auto;
 }
 
 .session-chat-panel__header {
@@ -31,11 +35,37 @@
   border-left: 4px solid #61dafb;
 }
 
+.session-chat-panel__header--team-blue {
+  border-left-color: #3b82f6;
+}
+
+.session-chat-panel__header--team-red {
+  border-left-color: #ef4444;
+}
+
+.session-chat-panel__header--team-white {
+  border-left-color: #fbbf24;
+}
+
+.session-chat-panel__header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
 .session-chat-panel__title {
   font-size: 13px;
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
+}
+
+.session-chat-panel__title--minimized {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.95;
 }
 
 .session-chat-panel__header-actions {
@@ -91,8 +121,7 @@
 
 .session-chat-panel__body {
   flex: 1;
-  min-height: 160px;
-  max-height: 200px;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -100,9 +129,10 @@
 
 .session-chat-panel__messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.92);
   line-height: 1.45;
 }
@@ -133,6 +163,18 @@
   color: rgba(129, 230, 160, 0.9);
 }
 
+.session-chat-panel__msg--white_red .session-chat-panel__msg-scope {
+  color: #f87171;
+}
+
+.session-chat-panel__msg--white_blue .session-chat-panel__msg-scope {
+  color: #60a5fa;
+}
+
+.session-chat-panel__msg--team_white .session-chat-panel__msg-scope {
+  color: #fde68a;
+}
+
 .session-chat-panel__msg-from {
   font-weight: 700;
   color: #61dafb;
@@ -140,6 +182,7 @@
 }
 
 .session-chat-panel__channel-bar {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -170,6 +213,24 @@
   border-color: rgba(251, 191, 36, 0.4);
 }
 
+.session-chat-panel__channel-pill--white_red {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.session-chat-panel__channel-pill--white_blue {
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.session-chat-panel__channel-pill--team_white {
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(253, 230, 138, 0.45);
+}
+
 .session-chat-panel__channel-hint {
   opacity: 0.75;
   font-size: 10px;
@@ -179,6 +240,7 @@
 
 .session-chat-panel__players {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 10px;
   font-size: 12px;
@@ -217,6 +279,7 @@
 }
 
 .session-chat-panel__input-row {
+  flex-shrink: 0;
   display: flex;
   gap: 6px;
   padding: 8px;

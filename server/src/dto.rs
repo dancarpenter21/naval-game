@@ -109,11 +109,17 @@ pub struct PlayersListDto {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ChatScopeDto {
     #[default]
     All,
     Team,
+    /// White cell + red team (white cell senders only).
+    WhiteRed,
+    /// White cell + blue team (white cell senders only).
+    WhiteBlue,
+    /// Red or blue only: same team + all white cell players (reach white).
+    TeamWhite,
 }
 
 #[derive(Debug, Clone, Serialize)]

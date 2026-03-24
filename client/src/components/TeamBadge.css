@@ -1,0 +1,52 @@
+.team-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  max-width: 220px;
+}
+
+.team-badge__text {
+  min-width: 0;
+}
+
+.team-badge__title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.team-badge__subtitle {
+  font-size: 11px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* Inline header inside Session chat panel */
+.team-badge--compact {
+  gap: 8px;
+  padding: 2px 6px 2px 2px;
+  max-width: min(100%, 260px);
+  box-shadow: none;
+  background: transparent;
+  border-radius: 6px;
+}
+
+.team-badge--compact .team-badge__title {
+  font-size: 12px;
+}
+
+.team-badge--compact .team-badge__subtitle {
+  font-size: 10px;
+  margin-top: 0;
+  opacity: 0.8;
+}
+
+.team-badge--compact .team-badge__shield {
+  flex-shrink: 0;
+}
