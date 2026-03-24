@@ -103,6 +103,19 @@ function App() {
     };
   }, []);
 
+  // stop_session disconnects every socket in the room. Socket.IO treats that as
+  // "io server disconnect" and does not auto-reconnect; without socket.connect()
+  // the singleton stays dead and lobby flows (e.g. get_scenarios) never flush.
+  useEffect(() => {
+    const handleDisconnect = (reason) => {
+      if (reason === 'io server disconnect') {
+        socket.connect();
+      }
+    };
+    socket.on('disconnect', handleDisconnect);
+    return () => socket.off('disconnect', handleDisconnect);
+  }, []);
+
   const handleStopGame = () => {
     if (!session?.id) return;
     if (session?.player_team !== 'white') return;
