@@ -7,7 +7,8 @@ use socketioxide::{
 use tracing::{debug, info, warn};
 use tower_http::cors::CorsLayer;
 use serde::{de::Error as _, Deserialize, Deserializer};
-use std::collections::HashMap;
+use chrono::{DateTime, Utc};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::env;
@@ -25,6 +26,7 @@ mod scenario;
 mod terrain;
 mod sidc;
 mod sim_timing;
+mod space;
 use ecs::{Allegiance, EntityConfig, WorldTemplate};
 use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
@@ -33,7 +35,7 @@ use dto::{
     ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, IssueMovementOrderDto,
     JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto, PlayersListRequestDto,
     RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto, SetTimeScaleDto,
-    EntitySnapshotDto, LatLonDegDto, SnapshotRequestDto, StopSessionDto,
+    EntitySnapshotDto, LatLonDegDto, SpaceCoverageEventDto, SnapshotRequestDto, StopSessionDto,
 };
 use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
 
@@ -50,6 +52,15 @@ struct MovementConfig {
     max_speed_knots: f64,
     #[allow(dead_code)]
     acceleration: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SpaceOrbitYaml {
+    line1: String,
+    line2: String,
+    fov_half_angle_deg: f64,
+    #[serde(default)]
+    hide_map_marker: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +107,11 @@ struct EntityState {
     /// Total geodesic path length (m) when a movement order was applied; drives `station_progress`.
     movement_path_total_m: Option<f64>,
     symbol: SymbolConfig,
+    /// TLE / SGP4 propagation (no surface movement integration).
+    space: Option<space::SpaceOrbitRuntime>,
+    /// Last space overlay sent to clients (updated on space ticks).
+    space_overlay: Option<crate::dto::SpaceSnapshotDto>,
+    hide_map_marker: bool,
 }
 
 #[allow(dead_code)] // Reserved for future status / SIDC updates on entities
@@ -116,6 +132,50 @@ impl EntityState {
 fn on_session_closed_stub(_public: &SessionPublic) {
     // Stub hook for game logging/recording when the session closes.
     // Intentionally left empty for now.
+}
+
+fn space_tick_interval_from_env() -> u64 {
+    let raw = env::var(space::ENV_SPACE_TICK_INTERVAL).ok();
+    let mut v = space::DEFAULT_SPACE_TICK_INTERVAL;
+    if let Some(ref s) = raw {
+        if let Ok(n) = s.trim().parse::<u64>() {
+            v = n.max(1);
+        }
+    }
+    v
+}
+
+fn collect_satellite_rows(world: &[EntityState]) -> Vec<(String, f64, f64, f64)> {
+    world
+        .iter()
+        .filter_map(|e| {
+            let sp = e.space.as_ref()?;
+            let fr = space::footprint_radius_m(e.transform.hae_m, sp.config.fov_half_angle_deg);
+            Some((e.id.clone(), e.transform.lat_deg, e.transform.lon_deg, fr))
+        })
+        .collect()
+}
+
+fn collect_ground_rows(world: &[EntityState]) -> Vec<(String, f64, f64)> {
+    world
+        .iter()
+        .filter(|e| e.space.is_none())
+        .map(|e| (e.id.clone(), e.transform.lat_deg, e.transform.lon_deg))
+        .collect()
+}
+
+fn propagate_space_entities(world: &mut [EntityState], t: DateTime<Utc>) {
+    for e in world.iter_mut() {
+        let Some(ref sp) = e.space else {
+            continue;
+        };
+        if let Ok((lat, lon, hae, snap)) = space::propagate_and_snapshot(sp, t) {
+            e.transform.lat_deg = lat;
+            e.transform.lon_deg = lon;
+            e.transform.hae_m = hae;
+            e.space_overlay = Some(snap);
+        }
+    }
 }
 
 fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> {
@@ -159,9 +219,11 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 heading_deg: s.transform.heading_deg,
                 sidc: s.symbol.sidc.clone(),
                 movable: s.movement.is_some(),
+                hide_map_marker: s.hide_map_marker,
                 station_eta_sim_s,
                 station_progress,
                 display_path_deg,
+                space: s.space_overlay.clone(),
             }
         })
         .collect()
@@ -170,6 +232,9 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
 /// Integrate simple kinematics for `dt_sim_s` (simulated seconds, not wall time).
 fn integrate_entities(world: &mut [EntityState], dt_sim_s: f64) {
     for entity in world.iter_mut() {
+        if entity.space.is_some() {
+            continue;
+        }
         let Some(ref mov) = entity.movement else {
             continue;
         };
@@ -375,6 +440,8 @@ fn entity_state_from_template(entity_template: &EntityConfig, instance_id: Strin
     let mut transform: Option<TransformWorld> = None;
     let mut movement: Option<MovementConfig> = None;
     let mut symbol: Option<SymbolConfig> = None;
+    let mut space: Option<space::SpaceOrbitRuntime> = None;
+    let mut hide_map_marker = false;
 
     for component in entity_template.components.iter() {
         match component.kind.as_str() {
@@ -396,6 +463,20 @@ fn entity_state_from_template(entity_template: &EntityConfig, instance_id: Strin
                         .expect("failed to parse symbol component"),
                 );
             }
+            "space_orbit" => {
+                let cfg: SpaceOrbitYaml =
+                    serde_yaml::from_value(component.data.clone()).expect("space_orbit component");
+                hide_map_marker = cfg.hide_map_marker;
+                let orbit = space::SpaceOrbitConfig {
+                    line1: cfg.line1,
+                    line2: cfg.line2,
+                    fov_half_angle_deg: cfg.fov_half_angle_deg,
+                    hide_map_marker,
+                };
+                space = Some(
+                    space::SpaceOrbitRuntime::from_config(orbit).expect("invalid TLE / space_orbit"),
+                );
+            }
             _ => {}
         }
     }
@@ -409,6 +490,9 @@ fn entity_state_from_template(entity_template: &EntityConfig, instance_id: Strin
         movement_mode: movement::MovementMode::Cruise,
         movement_path_total_m: None,
         symbol: symbol.expect("entity missing symbol component"),
+        space,
+        space_overlay: None,
+        hide_map_marker,
     }
 }
 
@@ -606,6 +690,7 @@ fn spawn_game_loop(
     timing: Arc<Mutex<SimTimingState>>,
     io: SocketIo,
     wall_tick: Duration,
+    space_tick_interval: u64,
 ) -> (JoinHandle<()>, tokio::sync::oneshot::Sender<()>) {
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -613,6 +698,7 @@ fn spawn_game_loop(
         let mut ticker = time::interval(wall_tick);
         ticker.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
         let mut tick_count: u64 = 0;
+        let mut coverage_prev: HashSet<(String, String)> = HashSet::new();
         loop {
             tokio::select! {
                 _ = &mut stop_rx => {
@@ -627,11 +713,21 @@ fn spawn_game_loop(
                 _ = ticker.tick() => {
                     tick_count += 1;
 
-                    let (wall_dt_s, scale) = {
+                    let (wall_dt_s, scale, session_start_utc, sim_elapsed_before) = {
                         let t = timing.lock().await;
-                        (t.wall_dt_s, SimTimingState::clamp_time_scale(t.time_scale))
+                        (
+                            t.wall_dt_s,
+                            SimTimingState::clamp_time_scale(t.time_scale),
+                            t.session_start_utc,
+                            t.sim_elapsed_s,
+                        )
                     };
                     let sim_advance_s = wall_dt_s * scale;
+                    let sim_end_elapsed_s = sim_elapsed_before + sim_advance_s;
+                    let end_time = session_start_utc
+                        + chrono::Duration::nanoseconds((sim_end_elapsed_s * 1e9).round() as i64);
+
+                    let mut space_events: Vec<SpaceCoverageEventDto> = Vec::new();
 
                     let entities_dto = {
                         let mut guard = world.lock().await;
@@ -641,13 +737,36 @@ fn spawn_game_loop(
                             integrate_entities(&mut guard, step);
                             remaining -= step;
                         }
+
+                        if tick_count == 1 {
+                            propagate_space_entities(&mut guard, end_time);
+                            let sats = collect_satellite_rows(&guard);
+                            let ground = collect_ground_rows(&guard);
+                            coverage_prev = space::current_coverage_pairs(&sats, &ground);
+                        } else if tick_count > 1
+                            && space_tick_interval > 0
+                            && tick_count % space_tick_interval == 0
+                        {
+                            propagate_space_entities(&mut guard, end_time);
+                            let sats = collect_satellite_rows(&guard);
+                            let ground = collect_ground_rows(&guard);
+                            let sim_str =
+                                end_time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                            space_events = space::diff_coverage_events(
+                                &sats,
+                                &ground,
+                                &mut coverage_prev,
+                                sim_str,
+                            );
+                        }
+
                         entity_snapshots_from_world(&guard)
                     };
 
                     let dto = {
                         let mut t = timing.lock().await;
                         t.sim_elapsed_s += sim_advance_s;
-                        t.to_world_snapshot(entities_dto)
+                        t.to_world_snapshot(entities_dto, space_events)
                     };
 
                     let sim_elapsed_log = dto.sim_elapsed_s;
@@ -790,6 +909,7 @@ fn on_connect(
             let wall_dt_s = sim_wall_create.dt_s;
             let wall_tick = Duration::from_secs_f64(wall_dt_s);
             let timing = Arc::new(Mutex::new(SimTimingState::new_now(wall_dt_s)));
+            let space_tick_interval = space_tick_interval_from_env();
             let (loop_handle, stop_tx) = spawn_game_loop(
                 public.id.clone(),
                 public.name.clone(),
@@ -797,6 +917,7 @@ fn on_connect(
                 timing.clone(),
                 io.clone(),
                 wall_tick,
+                space_tick_interval,
             );
             let world_for_session = world.clone();
             let mut player_teams = HashMap::new();
@@ -903,7 +1024,7 @@ fn on_connect(
                     };
                     let dto = {
                         let t = session.timing.lock().await;
-                        t.to_world_snapshot(snapshots)
+                        t.to_world_snapshot(snapshots, vec![])
                     };
                     socket.emit("world_snapshot", dto).ok();
                 }
@@ -924,7 +1045,7 @@ fn on_connect(
                     };
                     let dto = {
                         let t = session.timing.lock().await;
-                        t.to_world_snapshot(snapshots)
+                        t.to_world_snapshot(snapshots, vec![])
                     };
                     info!(
                         "Sending requested world_snapshot session_name={} session_id={} tick_count={} entities={}",

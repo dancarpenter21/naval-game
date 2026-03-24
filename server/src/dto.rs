@@ -18,6 +18,24 @@ pub struct LatLonDegDto {
     pub lon_deg: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceSnapshotDto {
+    pub line1: String,
+    pub line2: String,
+    pub fov_half_angle_deg: f64,
+    pub footprint_radius_m: f64,
+    pub ground_track_deg: Vec<LatLonDegDto>,
+    pub future_footprint_deg: Vec<LatLonDegDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceCoverageEventDto {
+    pub kind: String,
+    pub satellite_id: String,
+    pub asset_id: String,
+    pub sim_time_utc: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EntitySnapshotDto {
     pub id: String,
@@ -30,6 +48,9 @@ pub struct EntitySnapshotDto {
     pub sidc: String,
     /// False if the entity has no `movement` component (cannot receive movement orders).
     pub movable: bool,
+    /// When true, map does not draw a position marker (e.g. space assets).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_map_marker: bool,
     /// Simulated seconds until the entity is on its assigned station (orbit/racetrack), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub station_eta_sim_s: Option<f64>,
@@ -39,6 +60,9 @@ pub struct EntitySnapshotDto {
     /// Full planned path for map overlay (current position → waypoints → station).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_path_deg: Option<Vec<LatLonDegDto>>,
+    /// TLE / footprint / ground track when this entity is a space asset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space: Option<SpaceSnapshotDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +76,9 @@ pub struct WorldSnapshotDto {
     pub wall_dt_s: f64,
     /// Sim seconds per wall second (1 = real time; max 64×).
     pub time_scale: f64,
+    /// Satellite coverage enter/leave since last snapshot (empty most ticks).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub space_coverage_events: Vec<SpaceCoverageEventDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

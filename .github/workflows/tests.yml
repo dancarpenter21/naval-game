@@ -2,10 +2,16 @@
 name: Tests (Docker)
 
 on:
+  # All branch pushes (feature branches get CI before a PR exists).
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
+
+concurrency:
+  # Same commit can trigger push + pull_request; one run per workflow per SHA.
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: true
 
 jobs:
   docker-tests:

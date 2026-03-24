@@ -10,7 +10,7 @@ use std::env;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use tracing::warn;
 
-use crate::dto::{EntitySnapshotDto, WorldSnapshotDto};
+use crate::dto::{EntitySnapshotDto, SpaceCoverageEventDto, WorldSnapshotDto};
 
 /// Environment variable: simulation wall-clock rate in Hz (ticks per second).
 pub const ENV_SIM_TICK_HZ: &str = "SIM_TICK_HZ";
@@ -114,13 +114,18 @@ impl SimTimingState {
         (self.session_start_utc + ch).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
     }
 
-    pub fn to_world_snapshot(&self, entities: Vec<EntitySnapshotDto>) -> WorldSnapshotDto {
+    pub fn to_world_snapshot(
+        &self,
+        entities: Vec<EntitySnapshotDto>,
+        space_coverage_events: Vec<SpaceCoverageEventDto>,
+    ) -> WorldSnapshotDto {
         WorldSnapshotDto {
             entities,
             sim_elapsed_s: self.sim_elapsed_s,
             sim_time_utc: self.sim_time_rfc3339(),
             wall_dt_s: self.wall_dt_s,
             time_scale: self.time_scale,
+            space_coverage_events,
         }
     }
 }

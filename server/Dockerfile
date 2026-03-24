@@ -2,6 +2,9 @@ FROM rust:latest
 
 WORKDIR /app
 
+# Application crates (e.g. sgp4, geo) are declared in Cargo.toml / Cargo.lock; `cargo build|test`
+# in this image fetches them — no host Rust install required.
+
 # Install cargo-watch for live re-loading during development
 RUN cargo install cargo-watch
 

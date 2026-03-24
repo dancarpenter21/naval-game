@@ -11,10 +11,11 @@ function formatEtaSim(seconds) {
 }
 
 /**
- * Gantt-style progress toward assigned orbit/racetrack (from server `station_*` fields).
+ * Gantt-style progress toward assigned orbit/racetrack (from server `station_*` fields),
+ * plus satellite coverage enter/leave events.
  */
-const SyncMatrixView = ({ entities = [], simTiming = null }) => {
-  const rows = useMemo(() => {
+const SyncMatrixView = ({ entities = [], simTiming = null, spaceCoverageFeed = [] }) => {
+  const stationRows = useMemo(() => {
     return (entities || []).filter(
       (e) =>
         e.movable !== false &&
@@ -46,14 +47,63 @@ const SyncMatrixView = ({ entities = [], simTiming = null }) => {
         )}
       </p>
 
-      {rows.length === 0 ? (
+      {spaceCoverageFeed.length > 0 && (
+        <div style={{ marginBottom: '1.25rem' }}>
+          <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem', color: '#a5b4fc' }}>
+            Satellite coverage
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {spaceCoverageFeed.map((ev, i) => {
+              const enter = String(ev.kind).toLowerCase() === 'enter';
+              return (
+                <div
+                  key={`${ev.satellite_id}-${ev.asset_id}-${ev.sim_time_utc}-${i}`}
+                  data-testid={`sync-coverage-${i}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    background: 'rgba(30, 41, 59, 0.55)',
+                    border: `1px solid ${enter ? 'rgba(134, 239, 172, 0.35)' : 'rgba(248, 113, 113, 0.35)'}`,
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    fontSize: '0.88rem',
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: '1.1rem',
+                      lineHeight: 1,
+                      opacity: 0.95,
+                    }}
+                    title={enter ? 'Entered FoV' : 'Left FoV'}
+                    aria-hidden
+                  >
+                    {enter ? '🛰️→' : '🛰️←'}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {enter ? 'In FoV' : 'Out of FoV'}: <span style={{ color: '#e2e8f0' }}>{ev.asset_id}</span>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'monospace' }}>
+                      sat {ev.satellite_id} · {ev.sim_time_utc}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {stationRows.length === 0 ? (
         <p style={{ color: '#6b7280', fontSize: '0.95rem' }}>
           No active movement-to-station plans. Issue a plan on the map (waypoints + O or R) to see
           rows here.
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {rows.map((e) => {
+          {stationRows.map((e) => {
             const eta = e.station_eta_sim_s;
             const p = typeof e.station_progress === 'number' ? e.station_progress : 0;
             const pct = Math.round(Math.min(1, Math.max(0, p)) * 100);
