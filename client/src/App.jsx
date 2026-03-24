@@ -10,6 +10,7 @@ import SystemView from './components/SystemView';
 import SessionModal from './components/SessionModal';
 import './App.css';
 import { SIDC_HELP_HREF, SOCKET_PATH, SOCKET_URL } from './config';
+import { EntityDtoSchema, WorldSnapshotDtoShapeSchema } from './schema/snapshot';
 
 const socket = SOCKET_URL
   ? io(SOCKET_URL, { path: SOCKET_PATH })
@@ -60,23 +61,68 @@ function App() {
     setMapSelectedEntityId(null);
   }, [session?.id]);
 
-  /** Server timing fields on every `world_snapshot` (all tabs, not only Map). */
+  /** Server timing fields and global entities on every `world_snapshot` */
   useEffect(() => {
     if (!session?.id) return undefined;
+
+    socket.emit('request_world_snapshot', { id: session.id });
+
     const handleWorldSnapshot = (snapshot) => {
-      const o = Array.isArray(snapshot) || snapshot == null ? null : snapshot;
-      if (!o || typeof o !== 'object') return;
-      if (typeof o.time_scale !== 'number' && typeof o.sim_elapsed_s !== 'number') return;
-      setSimTiming({
-        sim_elapsed_s: typeof o.sim_elapsed_s === 'number' ? o.sim_elapsed_s : 0,
-        sim_time_utc: typeof o.sim_time_utc === 'string' ? o.sim_time_utc : null,
-        wall_dt_s: typeof o.wall_dt_s === 'number' ? o.wall_dt_s : null,
-        time_scale: typeof o.time_scale === 'number' ? o.time_scale : 1,
-      });
+      const candidate = Array.isArray(snapshot) ? { entities: snapshot } : snapshot;
+
+      const topLevel = WorldSnapshotDtoShapeSchema.safeParse(candidate);
+      if (!topLevel.success) {
+        console.error('[world_snapshot] invalid DTO shape', {
+          receivedType: snapshot === null ? 'null' : typeof snapshot,
+          issues: topLevel.error.issues.slice(0, 5),
+        });
+        setWorldEntities([]);
+        return;
+      }
+
+      const entitiesUnknown = topLevel.data.entities;
+      const validEntities = [];
+      let invalidCount = 0;
+
+      for (const entityUnknown of entitiesUnknown) {
+        const parsedEntity = EntityDtoSchema.safeParse(entityUnknown);
+        if (!parsedEntity.success) {
+          invalidCount += 1;
+          continue;
+        }
+        const row = parsedEntity.data;
+        validEntities.push({
+          ...row,
+          movable: row.movable !== false,
+          hide_map_marker: row.hide_map_marker === true,
+        });
+      }
+
+      const cov = topLevel.data.space_coverage_events;
+      if (Array.isArray(cov) && cov.length > 0) {
+        handleSpaceCoverageEvents(cov);
+      }
+
+      if (invalidCount > 0) {
+        console.error('[world_snapshot] invalid entity DTOs detected', { invalidCount });
+      }
+
+      setWorldEntities(validEntities);
+
+      const o = topLevel.data;
+      if (typeof o.time_scale === 'number' || typeof o.sim_elapsed_s === 'number') {
+        setSimTiming({
+          sim_elapsed_s: typeof o.sim_elapsed_s === 'number' ? o.sim_elapsed_s : 0,
+          sim_time_utc: typeof o.sim_time_utc === 'string' ? o.sim_time_utc : null,
+          wall_dt_s: typeof o.wall_dt_s === 'number' ? o.wall_dt_s : null,
+          time_scale: typeof o.time_scale === 'number' ? o.time_scale : 1,
+        });
+      }
     };
+
     socket.on('world_snapshot', handleWorldSnapshot);
     return () => socket.off('world_snapshot', handleWorldSnapshot);
-  }, [session?.id]);
+  }, [session?.id, handleSpaceCoverageEvents]);
 
   useEffect(() => {
     const handleSessionStopped = () => {
@@ -269,8 +315,7 @@ function App() {
             key={session?.id ?? 'no-session'}
             socket={socket}
             session={session}
-            onEntitiesUpdate={setWorldEntities}
-            onSpaceCoverageEvents={handleSpaceCoverageEvents}
+            entities={worldEntities}
             selectedEntityId={mapSelectedEntityId}
             onSelectedEntityIdChange={setMapSelectedEntityId}
           />

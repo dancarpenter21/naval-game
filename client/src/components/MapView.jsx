@@ -3,7 +3,6 @@ import L from 'leaflet';
 import ms from 'milsymbol';
 import 'leaflet/dist/leaflet.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { z } from 'zod';
 import missileOutlinePngUrl from '../assets/missile-outline-transparent.png';
 import MovementPlanningLayer from './MovementPlanningLayer';
 import MapKeyboardPanLayer from './MapKeyboardPanLayer';
@@ -143,55 +142,6 @@ const isMissileSidc = (sidc) => {
 const MISSILE_OUTLINE_PNG_W = 1024;
 const MISSILE_OUTLINE_PNG_H = 1536;
 
-const LatLonDegSchema = z.object({
-  lat_deg: z.number(),
-  lon_deg: z.number(),
-});
-
-const SpaceSnapshotSchema = z.object({
-  line1: z.string(),
-  line2: z.string(),
-  fov_half_angle_deg: z.number(),
-  footprint_radius_m: z.number(),
-  ground_track_deg: z.array(LatLonDegSchema),
-  future_footprint_deg: z.array(LatLonDegSchema),
-});
-
-const EntityDtoSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  allegiance: z.enum(['hostile', 'friendly']),
-  lat_deg: z.number(),
-  lon_deg: z.number(),
-  hae_m: z.number(),
-  heading_deg: z.number(),
-  sidc: z.string(),
-  movable: z.boolean().optional(),
-  hide_map_marker: z.boolean().optional(),
-  space: SpaceSnapshotSchema.optional().nullable(),
-  station_eta_sim_s: z.number().optional().nullable(),
-  station_progress: z.number().optional().nullable(),
-  display_path_deg: z.array(LatLonDegSchema).optional().nullable(),
-});
-
-// Enforce that the payload is an object with an `entities` array.
-// We'll validate each element separately so malformed entries don't break rendering.
-const SpaceCoverageEventSchema = z.object({
-  kind: z.string(),
-  satellite_id: z.string(),
-  asset_id: z.string(),
-  sim_time_utc: z.string(),
-});
-
-const WorldSnapshotDtoShapeSchema = z.object({
-  entities: z.array(z.unknown()),
-  sim_elapsed_s: z.number().optional(),
-  sim_time_utc: z.string().optional(),
-  wall_dt_s: z.number().optional(),
-  time_scale: z.number().optional(),
-  space_coverage_events: z.array(SpaceCoverageEventSchema).optional(),
-});
-
 function isTypingInFormField() {
   const el = document.activeElement;
   if (!el || typeof el !== 'object') return false;
@@ -291,12 +241,10 @@ function createSatelliteNadirEyeDivIcon() {
 const MapView = ({
   socket,
   session,
-  onEntitiesUpdate,
-  onSpaceCoverageEvents,
+  entities = [],
   selectedEntityId: selectedEntityIdProp = null,
   onSelectedEntityIdChange,
 }) => {
-  const [entities, setEntities] = useState([]);
   const [internalSelectedEntityId, setInternalSelectedEntityId] = useState(null);
   const selectionControlled = typeof onSelectedEntityIdChange === 'function';
   const selectedEntityId = selectionControlled ? selectedEntityIdProp : internalSelectedEntityId;
@@ -333,74 +281,6 @@ const MapView = ({
     racetrackDraftRef.current = racetrackDraft;
     selectedEntityIdRef.current = selectedEntityId;
   });
-
-  useEffect(() => {
-    if (!socket || !session?.id) return;
-
-    const handleWorldSnapshot = (snapshot) => {
-      const candidate = Array.isArray(snapshot) ? { entities: snapshot } : snapshot;
-
-      const topLevel = WorldSnapshotDtoShapeSchema.safeParse(candidate);
-      if (!topLevel.success) {
-        console.error('[world_snapshot] invalid DTO shape', {
-          receivedType: snapshot === null ? 'null' : typeof snapshot,
-          issues: topLevel.error.issues.slice(0, 5),
-        });
-        setEntities([]);
-        onEntitiesUpdate?.([]);
-        return;
-      }
-
-      const entitiesUnknown = topLevel.data.entities;
-      const validEntities = [];
-      let invalidCount = 0;
-
-      for (const entityUnknown of entitiesUnknown) {
-        const parsedEntity = EntityDtoSchema.safeParse(entityUnknown);
-        if (!parsedEntity.success) {
-          invalidCount += 1;
-          continue;
-        }
-        const row = parsedEntity.data;
-        validEntities.push({
-          ...row,
-          movable: row.movable !== false,
-          hide_map_marker: row.hide_map_marker === true,
-        });
-      }
-
-      const cov = topLevel.data.space_coverage_events;
-      if (Array.isArray(cov) && cov.length > 0) {
-        onSpaceCoverageEvents?.(cov);
-      }
-
-      console.log('[world_snapshot] received', {
-        isArray: Array.isArray(snapshot),
-        normalizedCount: entitiesUnknown.length,
-        validCount: validEntities.length,
-        sample: validEntities.slice(0, 3).map((s) => ({ id: s.id, allegiance: s.allegiance })),
-      });
-
-      if (invalidCount > 0) {
-        console.error('[world_snapshot] invalid entity DTOs detected', {
-          invalidCount,
-          sampleInvalid: entitiesUnknown
-            .filter((s) => !EntityDtoSchema.safeParse(s).success)
-            .slice(0, 3)
-            .map((s) => typeof s),
-        });
-      }
-
-      setEntities(validEntities);
-      onEntitiesUpdate?.(validEntities);
-    };
-
-    socket.on('world_snapshot', handleWorldSnapshot);
-    socket.emit('request_world_snapshot', { id: session.id });
-    return () => {
-      socket.off('world_snapshot', handleWorldSnapshot);
-    };
-  }, [socket, session?.id, onEntitiesUpdate, onSpaceCoverageEvents]);
 
   useEffect(() => {
     if (!socket) return;
