@@ -35,6 +35,45 @@ impl ScenarioEntityRef {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "params", rename_all = "snake_case")]
+pub enum ObjectiveCondition {
+    SurviveTime { 
+        duration_s: f64 
+    },
+    DestroyEntity { 
+        target_id: String, 
+        #[serde(default)]
+        time_limit_s: Option<f64> 
+    },
+    ReachArea { 
+        target_id: String, 
+        lat_deg: f64, 
+        lon_deg: f64, 
+        radius_m: f64 
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ObjectiveConfig {
+    pub id: String,
+    pub description: Option<String>,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(flatten)]
+    pub condition: ObjectiveCondition,
+}
+
+fn default_true() -> bool { true }
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+pub struct ScenarioObjectives {
+    #[serde(default)]
+    pub red: Vec<ObjectiveConfig>,
+    #[serde(default)]
+    pub blue: Vec<ObjectiveConfig>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ScenarioConfig {
     /// Human-readable title; if omitted, derived from the filename.
@@ -43,7 +82,9 @@ pub struct ScenarioConfig {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
-    pub win_conditions: String,
+    pub win_conditions: Option<String>,
+    #[serde(default)]
+    pub objectives: Option<ScenarioObjectives>,
     /// Entity template refs (should match `allegiance: hostile` in entity YAML).
     #[serde(default, alias = "red")]
     pub red_entities: Vec<ScenarioEntityRef>,
@@ -79,6 +120,32 @@ impl LoadedScenario {
             .name
             .clone()
             .unwrap_or_else(|| title_case_from_id(&self.id))
+    }
+
+    pub fn formatted_win_conditions(&self) -> String {
+        let mut s = String::new();
+        if let Some(ref w) = self.config.win_conditions {
+            s.push_str(w);
+            s.push_str("\n\n");
+        }
+        if let Some(ref o) = self.config.objectives {
+            if !o.blue.is_empty() {
+                s.push_str("Blue Objectives:\n");
+                for obj in &o.blue {
+                    s.push_str(&format!("- {}\n", obj.description.as_deref().unwrap_or(&obj.id)));
+                }
+            }
+            if !o.red.is_empty() {
+                if !o.blue.is_empty() {
+                    s.push_str("\n");
+                }
+                s.push_str("Red Objectives:\n");
+                for obj in &o.red {
+                    s.push_str(&format!("- {}\n", obj.description.as_deref().unwrap_or(&obj.id)));
+                }
+            }
+        }
+        s.trim().to_string()
     }
 }
 
@@ -201,7 +268,10 @@ blue_entities:
         assert_eq!(loaded[0].id, "coastal-patrol");
         assert_eq!(loaded[0].config.name.as_deref(), Some("Coastal patrol"));
         assert_eq!(loaded[0].config.description, "Test description line.");
-        assert_eq!(loaded[0].config.win_conditions, "Win by surviving.");
+        assert_eq!(
+            loaded[0].config.win_conditions.as_deref(),
+            Some("Win by surviving.")
+        );
         assert_eq!(
             loaded[0].config.red_entities,
             vec![ScenarioEntityRef::TemplateId("a".into())]
