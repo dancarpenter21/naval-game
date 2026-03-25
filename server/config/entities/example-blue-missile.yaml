@@ -14,6 +14,7 @@
         # Demo speed for missiles (knots).
         max_speed_knots: 1400.0
         acceleration: 1.0
+        skip_land_mask: true
     - kind: symbol
       data:
         sidc_template:

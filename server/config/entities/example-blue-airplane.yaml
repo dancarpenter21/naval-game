@@ -15,6 +15,7 @@
         # Fixed-wing example speed.
         max_speed_knots: 480.0
         acceleration: 2.0
+        skip_land_mask: true
     - kind: symbol
       data:
         sidc_template:
