@@ -28,4 +28,9 @@ blue_entities:
     hae_m: 1000.0
     heading_deg: 280.0
   - example-satellite
+  - id: pentagon
+    lat_deg: 38.8710
+    lon_deg: -77.0559
+    hae_m: 0.0
+    heading_deg: 0.0
 spawns: []

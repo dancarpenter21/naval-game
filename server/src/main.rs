@@ -458,8 +458,11 @@ fn load_scenario_catalog(world: &WorldTemplate, dir: &str) -> Result<ScenarioCat
     Ok(ScenarioCatalog { summaries, by_id })
 }
 
-fn entity_state_from_template(entity_template: &EntityConfig, instance_id: String) -> EntityState {
-    let mut transform: Option<TransformWorld> = None;
+fn entity_state_from_template(
+    entity_template: &EntityConfig,
+    instance_id: String,
+    initial_transform: TransformWorld,
+) -> EntityState {
     let mut movement: Option<MovementConfig> = None;
     let mut symbol: Option<SymbolConfig> = None;
     let mut space: Option<space::SpaceOrbitRuntime> = None;
@@ -467,12 +470,6 @@ fn entity_state_from_template(entity_template: &EntityConfig, instance_id: Strin
 
     for component in entity_template.components.iter() {
         match component.kind.as_str() {
-            "transform" => {
-                transform = Some(
-                    serde_yaml::from_value(component.data.clone())
-                        .expect("failed to parse transform component"),
-                );
-            }
             "movement" => {
                 movement = Some(
                     serde_yaml::from_value(component.data.clone())
@@ -507,7 +504,7 @@ fn entity_state_from_template(entity_template: &EntityConfig, instance_id: Strin
         id: instance_id,
         name: entity_template.name.clone(),
         allegiance: entity_template.allegiance.clone(),
-        transform: transform.expect("entity missing transform component"),
+        transform: initial_transform,
         movement,
         movement_mode: movement::MovementMode::Cruise,
         movement_path_total_m: None,
@@ -563,7 +560,8 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
                     } else {
                         format!("{}-{}", entity_template.id, i + 1)
                     };
-                    entities.push(entity_state_from_template(entity_template, instance_id));
+                    let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_m: 0.0, heading_deg: 0.0 };
+                    entities.push(entity_state_from_template(entity_template, instance_id, transform));
                 }
             } else {
                 warn!(
@@ -580,15 +578,18 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
                 continue;
             };
             let instance_id = entity_template.id.clone();
-            let mut entity = entity_state_from_template(entity_template, instance_id);
-            apply_scenario_transform_overrides(&mut entity.transform, entry);
+            let mut transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_m: 0.0, heading_deg: 0.0 };
+            apply_scenario_transform_overrides(&mut transform, entry);
+            let entity = entity_state_from_template(entity_template, instance_id, transform);
             entities.push(entity);
         }
     } else {
         for entity_template in &world_template.entities {
+            let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_m: 0.0, heading_deg: 0.0 };
             entities.push(entity_state_from_template(
                 entity_template,
                 entity_template.id.clone(),
+                transform
             ));
         }
     }

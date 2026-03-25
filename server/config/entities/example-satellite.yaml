@@ -2,12 +2,6 @@
   name: Example LEO Satellite
   allegiance: friendly
   components:
-    - kind: transform
-      data:
-        lat_deg: 0.0
-        lon_deg: 0.0
-        hae_m: 400000.0
-        heading_deg: 0.0
     - kind: space_orbit
       data:
         line1: "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992"

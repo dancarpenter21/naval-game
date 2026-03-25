@@ -2,13 +2,6 @@
   name: Blue Missile
   allegiance: friendly
   components:
-    - kind: transform
-      data:
-        # Default starting pose for the demo missile.
-        lat_deg: 35.6
-        lon_deg: -40.0
-        hae_m: 1000.0
-        heading_deg: 270.0
     - kind: movement
       data:
         # Demo speed for missiles (knots).

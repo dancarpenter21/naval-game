@@ -3,12 +3,6 @@
   name: Guided Missile Frigate
   allegiance: hostile
   components:
-    - kind: transform
-      data:
-        lat_deg: 35.0
-        lon_deg: -40.0
-        hae_m: 0.0
-        heading_deg: 90.0
     - kind: movement
       data:
         max_speed_knots: 30.0

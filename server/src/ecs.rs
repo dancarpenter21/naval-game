@@ -206,17 +206,17 @@ mod tests {
             "expected frigate status to decode as PresentFullyCapable from sidc or sidc_template"
         );
 
-        // We expect three components: transform, movement, symbol.
+        // We expect two components: movement, symbol.
         assert_eq!(
             frigate.components.len(),
-            3,
-            "frigate should have exactly three components"
+            2,
+            "frigate should have exactly two components"
         );
 
         let mut kinds: Vec<&str> = frigate.components.iter().map(|c| c.kind.as_str()).collect();
         kinds.sort_unstable();
 
-        assert_eq!(kinds, vec!["movement", "symbol", "transform"]);
+        assert_eq!(kinds, vec!["movement", "symbol"]);
 
         // Ensure that component data objects were deserialized and are not empty.
         for component in &frigate.components {
@@ -227,20 +227,7 @@ mod tests {
             );
         }
 
-        // Spot-check some transform fields expected by the map UI.
-        let transform = frigate
-            .components
-            .iter()
-            .find(|c| c.kind == "transform")
-            .expect("frigate should have a transform component");
 
-        for key in ["lat_deg", "lon_deg", "hae_m", "heading_deg"] {
-            assert!(
-                transform.data.get(key).is_some(),
-                "transform.data missing key '{key}': {:?}",
-                transform.data
-            );
-        }
 
         // Spot-check that symbol config uses sidc_template only.
         assert!(

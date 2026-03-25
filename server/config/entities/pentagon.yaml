@@ -1,23 +1,18 @@
-- id: blue-airplane
-  name: Blue Example Airplane
+- id: pentagon
+  name: The Pentagon
   allegiance: friendly
   components:
-    - kind: movement
-      data:
-        # Fixed-wing example speed.
-        max_speed_knots: 480.0
-        acceleration: 2.0
-        skip_land_mask: true
     - kind: symbol
       data:
         sidc_template:
           version: "10"
           context: reality
           standard_identity: friend
-          symbol_set: air
+          symbol_set: installation
           status: present
           hqtfd: not_applicable
           amplifier: unspecified
-          entity: code_110103
+          # 110000: Military Installation
+          entity: code_110000
           modifier_one: code_00
           modifier_two: code_00
