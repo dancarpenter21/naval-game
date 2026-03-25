@@ -18,6 +18,7 @@ tracing-subscriber = "0.3.18"
 # Geo dependencies
 geo = "0.28.0"
 geo-types = "0.7.13"
+geojson = "0.24.2"
 # WGS84 direct / inverse geodesic (Karney); matches client `geographiclib-geodesic`.
 geographiclib-rs = "0.2.4"
 uuid = { version = "1.22.0", features = ["v4"] }

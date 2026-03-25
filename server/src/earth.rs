@@ -48,6 +48,31 @@ pub fn geodesic_azimuth_deg_1_to_2(
     azi1
 }
 
+/// Sample points along the geodesic from `(lat0, lon0)` to `(lat1, lon1)` (inclusive),
+/// stepping at most `max_step_m` meters between consecutive samples.
+pub fn geodesic_segment_samples(
+    lat0: f64,
+    lon0: f64,
+    lat1: f64,
+    lon1: f64,
+    max_step_m: f64,
+) -> Vec<(f64, f64)> {
+    let total = geodesic_distance_m(lat0, lon0, lat1, lon1);
+    if !total.is_finite() || total <= 1.0 {
+        return vec![(lat0, lon0)];
+    }
+    let step = max_step_m.max(100.0);
+    let n = ((total / step).ceil() as usize).max(1);
+    let azi = geodesic_azimuth_deg_1_to_2(lat0, lon0, lat1, lon1);
+    let mut out = Vec::with_capacity(n + 1);
+    for i in 0..n {
+        let d = total * (i as f64) / (n as f64);
+        out.push(geodesic_direct_deg(lat0, lon0, azi, d));
+    }
+    out.push((lat1, lon1));
+    out
+}
+
 /// Signed radial error vs a desired geodesic orbit radius: `distance(center, pos) - radius_m`.
 #[inline]
 pub fn geodesic_orbit_radial_error_m(

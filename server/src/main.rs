@@ -24,6 +24,7 @@ mod movement;
 mod scenario;
 #[allow(dead_code)]
 mod terrain;
+mod land_mask;
 mod sidc;
 mod sim_timing;
 mod space;
@@ -52,6 +53,9 @@ struct MovementConfig {
     max_speed_knots: f64,
     #[allow(dead_code)]
     acceleration: f64,
+    /// When true, land-sea checks are skipped (air, missile, etc.).
+    #[serde(default)]
+    skip_land_mask: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -366,6 +370,8 @@ struct GameSession {
     world: Arc<Mutex<Vec<EntityState>>>,
     /// Authoritative simulation clock + time scale (white cell adjusts scale via socket).
     timing: Arc<Mutex<SimTimingState>>,
+    /// Natural Earth land polygons (or all-sea if disabled).
+    land_mask: land_mask::LandSeaMask,
 }
 
 fn sanitize_display_name(raw: &str) -> String {
@@ -644,6 +650,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         scenario_catalog.summaries.len()
     );
 
+    let land_mask = land_mask::LandSeaMask::load_default();
+
     let sessions_store: Arc<Mutex<HashMap<String, GameSession>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
@@ -664,6 +672,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let world_template = world_template.clone();
         let scenario_catalog = scenario_catalog.clone();
         let sim_wall_for_socket = sim_wall_clock.clone();
+        let land_mask_socket = land_mask.clone();
         io_for_ns.ns("/", move |socket: SocketRef| {
             on_connect(
                 socket,
@@ -672,6 +681,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 world_template.clone(),
                 scenario_catalog.clone(),
                 sim_wall_for_socket.clone(),
+                land_mask_socket.clone(),
             )
         });
     }
@@ -829,6 +839,7 @@ fn on_connect(
     world_template: Arc<WorldTemplate>,
     scenario_catalog: Arc<ScenarioCatalog>,
     sim_wall: Arc<SimWallClockConfig>,
+    land_mask: land_mask::LandSeaMask,
 ) {
     info!(
         "A user connected socket_id={} session_name={} session_id={} tick_count={}",
@@ -844,6 +855,7 @@ fn on_connect(
         let world_template = world_template.clone();
         let scenario_catalog = scenario_catalog.clone();
         let sim_wall_create = sim_wall.clone();
+        let land_mask_create = land_mask.clone();
         socket.on("create_session", |socket: SocketRef, Data::<CreateSessionDto>(data)| async move {
             let id = uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>();
 
@@ -950,6 +962,7 @@ fn on_connect(
                 _loop_handle: loop_handle,
                 world: world_for_session,
                 timing,
+                land_mask: land_mask_create.clone(),
             };
 
             store.lock().await.insert(id.clone(), game_session);
@@ -1166,6 +1179,24 @@ fn on_connect(
                                 message: "You cannot command that unit.".to_string(),
                             },
                         )
+                        .ok();
+                    return;
+                }
+
+                let enforce_land = entity
+                    .movement
+                    .as_ref()
+                    .is_some_and(|m| !m.skip_land_mask);
+                if let Some(msg) = land_mask::movement_order_violates_land(
+                    &session.land_mask,
+                    enforce_land,
+                    entity.transform.lat_deg,
+                    entity.transform.lon_deg,
+                    &waypoints,
+                    &station,
+                ) {
+                    socket
+                        .emit("movement_order_rejected", ErrorDto { message: msg })
                         .ok();
                     return;
                 }
