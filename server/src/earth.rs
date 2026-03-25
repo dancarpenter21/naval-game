@@ -14,6 +14,19 @@ fn wgs84() -> &'static Geodesic {
 /// WGS84 semi-major axis (m).
 pub const WGS84_A_M: f64 = 6378137.0;
 
+/// International foot in meters (exact definition). Used to convert WGS84 HAE between ft (wire format) and m (physics / Cesium).
+pub const METERS_PER_INTERNATIONAL_FOOT: f64 = 0.3048;
+
+#[inline]
+pub fn feet_to_meters(ft: f64) -> f64 {
+    ft * METERS_PER_INTERNATIONAL_FOOT
+}
+
+#[inline]
+pub fn meters_to_feet(m: f64) -> f64 {
+    m / METERS_PER_INTERNATIONAL_FOOT
+}
+
 /// Geodesic distance between two WGS84 positions (meters).
 #[inline]
 pub fn geodesic_distance_m(lat1_deg: f64, lon1_deg: f64, lat2_deg: f64, lon2_deg: f64) -> f64 {

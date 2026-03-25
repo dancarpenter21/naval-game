@@ -13,6 +13,6 @@ blue_entities:
   - id: blue-airplane
     lat_deg: 0.0
     lon_deg: 0.0
-    hae_m: 1000.0
+    hae_ft: 32808.4
     heading_deg: 0.0
 spawns: []

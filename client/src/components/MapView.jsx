@@ -1,15 +1,18 @@
 import * as Cesium from 'cesium';
 import ms from 'milsymbol';
-import missileOutlinePngUrl from '../assets/missile-outline-transparent.png';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { heightMetersFromZoom, svgToImageDataUrl, worldShadeWithHoleCartesian3, zoomFromHeightMeters } from '../map/mapViewCesiumHelpers';
 import { readMapViewMemory, writeMapViewMemory } from '../map/mapViewMemory';
 import { mapClickDebug } from '../utils/mapClickDebug';
+import { haeFeetToMeters } from '../units/length';
 import MovementPlanningCesium from './MovementPlanningCesium';
 
 /** Camera height (m) when focusing a selected unit (was zoom 7 in Leaflet). */
 const SELECTED_ENTITY_FOCUS_HEIGHT_M = heightMetersFromZoom(7);
 const DEFAULT_VIEW_HEIGHT_M = heightMetersFromZoom(4);
+
+/** NASA Blue Marble (Visible Earth) — bundled at `public/blue-marble-world.jpg`. */
+const BLUE_MARBLE_WORLD_IMAGE_URL = `${import.meta.env.BASE_URL}blue-marble-world.jpg`;
 
 /** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
 const MILSYMBOL_STANDARD = 'APP6';
@@ -29,13 +32,9 @@ const createMilSymbolSvg = ({ sidc, size }) => {
   return symbol.asSVG();
 };
 
-const isMissileSidc = (sidc) => {
-  const parts = String(sidc ?? '').split('-');
-  return parts.length >= 4 && parts[3] === '02';
-};
-
-const MISSILE_OUTLINE_PNG_W = 1024;
-const MISSILE_OUTLINE_PNG_H = 1536;
+function isGlobeUnitSelected(entity, selectedEntityId) {
+  return selectedEntityId != null && String(entity.id) === String(selectedEntityId);
+}
 
 function isTypingInFormField() {
   const el = document.activeElement;
@@ -139,6 +138,8 @@ const MapView = ({
   const selectedEntityIdRef = useRef(selectedEntityId);
   const [outerSize, setOuterSize] = useState({ width: 0, height: 0 });
   const [viewer, setViewer] = useState(null);
+  /** Set when Cesium.Viewer fails (e.g. WebGL); keeps tab chrome usable. */
+  const [viewerInitError, setViewerInitError] = useState(null);
   const deferredFocusAppliedRef = useRef(false);
 
   useEffect(() => {
@@ -223,44 +224,56 @@ const MapView = ({
   useEffect(() => {
     if (!containerRef.current) return undefined;
 
-    const v = new Cesium.Viewer(containerRef.current, {
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-      baseLayerPicker: false,
-      animation: false,
-      timeline: false,
-      fullscreenButton: false,
-      vrButton: false,
-      navigationHelpButton: false,
-      homeButton: false,
-      sceneModePicker: false,
-      geocoder: false,
-      skyBox: false,
-      skyAtmosphere: false,
-      shouldAnimate: false,
-      imageryProvider: false,
-      selectionIndicator: false,
-      infoBox: false,
-    });
+    let v;
+    try {
+      v = new Cesium.Viewer(containerRef.current, {
+        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+        baseLayerPicker: false,
+        animation: false,
+        timeline: false,
+        fullscreenButton: false,
+        vrButton: false,
+        homeButton: false,
+        sceneModePicker: false,
+        geocoder: false,
+        navigationHelpButton: false,
+        skyBox: false,
+        skyAtmosphere: false,
+        shouldAnimate: false,
+        imageryProvider: false,
+        selectionIndicator: false,
+        infoBox: false,
+      });
 
-    v.imageryLayers.addImageryProvider(
-      new Cesium.OpenStreetMapImageryProvider({ url: 'https://a.tile.openstreetmap.org/' }),
-    );
-    v.scene.globe.show = true;
-    v.scene.screenSpaceCameraController.enableRotate = false;
-    v.scene.screenSpaceCameraController.enableTranslate = false;
-    v.scene.screenSpaceCameraController.enableTilt = false;
-    v.scene.screenSpaceCameraController.enableZoom = true;
-    v.scene.screenSpaceCameraController.enableLook = false;
+      v.imageryLayers.addImageryProvider(
+        new Cesium.SingleTileImageryProvider({
+          url: BLUE_MARBLE_WORLD_IMAGE_URL,
+          rectangle: Cesium.Rectangle.fromDegrees(-180.0, -90.0, 180.0, 90.0),
+          credit: 'NASA Visible Earth — Blue Marble',
+        }),
+      );
+      v.scene.globe.show = true;
 
-    const [lat0, lon0] = mapBootstrap.center;
-    v.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(lon0, lat0, mapBootstrap.heightM),
-    });
+      const [lat0, lon0] = mapBootstrap.center;
+      v.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(lon0, lat0, mapBootstrap.heightM),
+      });
 
-    setViewer(v);
+      setViewerInitError(null);
+      setViewer(v);
+    } catch (err) {
+      console.error('[MapView] Cesium.Viewer failed', err);
+      setViewerInitError(err instanceof Error ? err.message : String(err));
+      setViewer(null);
+      return undefined;
+    }
 
     return () => {
-      v.destroy();
+      try {
+        v?.destroy?.();
+      } catch (e) {
+        console.warn('[MapView] viewer destroy', e);
+      }
       setViewer(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per mount
@@ -277,8 +290,12 @@ const MapView = ({
   useEffect(() => {
     if (!viewer || !outerRef.current) return undefined;
     const ro = new ResizeObserver(() => {
-      viewer.resize();
-      viewer.scene.requestRender?.();
+      try {
+        viewer.resize();
+        viewer.scene.requestRender?.();
+      } catch {
+        /* viewer may be destroyed between tick and callback */
+      }
     });
     ro.observe(outerRef.current);
     return () => ro.disconnect();
@@ -289,23 +306,32 @@ const MapView = ({
   useEffect(() => {
     if (!viewer) return undefined;
 
+    const camera = viewer.camera;
     const save = () => {
-      const canvas = viewer.scene.canvas;
-      const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
-      const ellipsoid = viewer.scene.globe.ellipsoid;
-      const cartesian = viewer.camera.pickEllipsoid(center, ellipsoid);
-      if (!cartesian || !sessionIdForMap) return;
-      const c = Cesium.Cartographic.fromCartesian(cartesian);
-      const lat = Cesium.Math.toDegrees(c.latitude);
-      const lon = Cesium.Math.toDegrees(c.longitude);
-      const h = viewer.camera.positionCartographic.height;
-      const z = zoomFromHeightMeters(h);
-      writeMapViewMemory(sessionIdForMap, [lat, lon], z, h);
+      try {
+        const canvas = viewer.scene.canvas;
+        const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+        const ellipsoid = viewer.scene.globe.ellipsoid;
+        const cartesian = viewer.camera.pickEllipsoid(center, ellipsoid);
+        if (!cartesian || !sessionIdForMap) return;
+        const c = Cesium.Cartographic.fromCartesian(cartesian);
+        const lat = Cesium.Math.toDegrees(c.latitude);
+        const lon = Cesium.Math.toDegrees(c.longitude);
+        const h = viewer.camera.positionCartographic.height;
+        const z = zoomFromHeightMeters(h);
+        writeMapViewMemory(sessionIdForMap, [lat, lon], z, h);
+      } catch {
+        /* viewer torn down during save */
+      }
     };
 
-    viewer.camera.moveEnd.addEventListener(save);
+    camera.moveEnd.addEventListener(save);
     return () => {
-      viewer.camera.moveEnd.removeEventListener(save);
+      try {
+        camera.moveEnd.removeEventListener(save);
+      } catch {
+        /* viewer.destroy() may have run before this cleanup */
+      }
     };
   }, [viewer, sessionIdForMap]);
 
@@ -327,61 +353,14 @@ const MapView = ({
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-    return () => handler.destroy();
-  }, [viewer, setSelectedEntityId]);
-
-  const PAN_RAD_PER_S = 0.42;
-  const keysRef = useRef(new Set());
-
-  useEffect(() => {
-    if (!viewer) return undefined;
-
-    const onKeyDown = (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTypingInFormField()) return;
-      const k = e.key.length === 1 ? e.key.toLowerCase() : '';
-      if (!['w', 'a', 's', 'd'].includes(k)) return;
-      e.preventDefault();
-      keysRef.current.add(k);
-    };
-
-    const onKeyUp = (e) => {
-      const k = e.key.length === 1 ? e.key.toLowerCase() : '';
-      keysRef.current.delete(k);
-    };
-
-    const clearKeys = () => keysRef.current.clear();
-
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', clearKeys);
-
-    let raf = 0;
-    let last = performance.now();
-
-    const tick = (now) => {
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      const keys = keysRef.current;
-      if (keys.size > 0) {
-        const step = PAN_RAD_PER_S * dt;
-        if (keys.has('w')) viewer.camera.rotateUp(step);
-        if (keys.has('s')) viewer.camera.rotateUp(-step);
-        if (keys.has('a')) viewer.camera.rotateLeft(-step);
-        if (keys.has('d')) viewer.camera.rotateLeft(step);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', clearKeys);
-      keysRef.current = new Set();
+      try {
+        handler.destroy();
+      } catch {
+        /* handler / canvas may already be torn down with viewer */
+      }
     };
-  }, [viewer]);
+  }, [viewer, setSelectedEntityId]);
 
   const playerTeam = String(session?.player_team ?? 'white').toLowerCase();
 
@@ -479,66 +458,58 @@ const MapView = ({
 
     for (const entity of entities) {
       if (entity.hide_map_marker) continue;
-      const selected = entity.id === selectedEntityId;
+      const selected = isGlobeUnitSelected(entity, selectedEntityId);
 
       let image;
       let width = 32;
       let height = 32;
-      let rotation = 0;
 
-      if (isMissileSidc(entity.sidc)) {
-        const color = entity.allegiance === 'hostile' ? '#ef4444' : '#3b82f6';
-        const heading = Number(entity.heading_deg ?? 0);
-        rotation = Cesium.Math.toRadians(-heading);
-        const maskId = `m-${entity.id.replace(/[^a-zA-Z0-9]/g, '')}`;
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 ${MISSILE_OUTLINE_PNG_W} ${MISSILE_OUTLINE_PNG_H}" xmlns:xlink="http://www.w3.org/1999/xlink">
-          <defs><mask id="${maskId}"><image href="${missileOutlinePngUrl}" width="${MISSILE_OUTLINE_PNG_W}" height="${MISSILE_OUTLINE_PNG_H}"/></mask></defs>
-          <rect width="${MISSILE_OUTLINE_PNG_W}" height="${MISSILE_OUTLINE_PNG_H}" fill="${color}" mask="url(#${maskId})"/></svg>`;
-        image = svgToImageDataUrl(svg);
-      } else {
-        try {
-          const normalizedSidc = normalizeSidc(entity.sidc);
-          const symbol = new ms.Symbol(normalizedSidc, {
-            size: selected ? 30 : 25,
-            standard: MILSYMBOL_STANDARD,
-          });
-          image = svgToImageDataUrl(symbol.asSVG());
-        } catch {
-          image = svgToImageDataUrl(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
-          );
-        }
-        width = selected ? 36 : 30;
-        height = selected ? 36 : 30;
+      try {
+        const normalizedSidc = normalizeSidc(entity.sidc);
+        const symbol = new ms.Symbol(normalizedSidc, {
+          size: selected ? 36 : 28,
+          standard: MILSYMBOL_STANDARD,
+          direction: Number(entity.heading_deg ?? 0),
+          outlineWidth: selected ? 6 : 0,
+          outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
+        });
+        image = svgToImageDataUrl(symbol.asSVG());
+      } catch {
+        image = svgToImageDataUrl(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
+        );
       }
+      width = selected ? 42 : 34;
+      height = selected ? 42 : 34;
 
+      const haeM = haeFeetToMeters(entity.hae_ft);
       viewer.entities.add({
         id: `unit-${entity.id}`,
-        position: Cesium.Cartesian3.fromDegrees(entity.lon_deg, entity.lat_deg, 0),
+        position: Cesium.Cartesian3.fromDegrees(entity.lon_deg, entity.lat_deg, haeM),
         billboard: {
           image,
           width,
           height,
+          scale: selected ? 1.12 : 1.0,
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-          rotation,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
     }
 
-    if (serverActivePathPositions) {
+    if (serverActivePathPositions && selectedEntity) {
+      const pathHaeM = haeFeetToMeters(selectedEntity.hae_ft);
       const flat = [];
       for (const [lat, lon] of serverActivePathPositions) {
-        flat.push(lon, lat);
+        flat.push(lon, lat, pathHaeM);
       }
       viewer.entities.add({
         id: 'overlay-activity-path',
         polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArray(flat),
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
           width: 3,
           material: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.92),
-          clampToGround: true,
         },
       });
     }
@@ -554,6 +525,7 @@ const MapView = ({
           hierarchy,
           material: Cesium.Color.fromCssColorString('#020617').withAlpha(0.58),
           perPositionHeight: false,
+          height: 0,
         },
       });
       viewer.entities.add({
@@ -566,7 +538,7 @@ const MapView = ({
           outline: true,
           outlineColor: Cesium.Color.fromCssColorString('#86efac'),
           outlineWidth: 2,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          height: 0,
         },
       });
       if (o.groundTrack.length > 1) {
@@ -600,6 +572,7 @@ const MapView = ({
     viewer,
     entities,
     selectedEntityId,
+    selectedEntity,
     serverActivePathPositions,
     satelliteSelectionOverlays,
   ]);
@@ -627,6 +600,30 @@ const MapView = ({
 
   return (
     <div ref={outerRef} style={{ height: '100%', width: '100%', position: 'relative' }}>
+      {viewerInitError && (
+        <div
+          role="alert"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 6000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            background: 'rgba(18,18,18,0.92)',
+            color: '#fecaca',
+            textAlign: 'center',
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        >
+          <div>
+            <strong style={{ display: 'block', marginBottom: 8 }}>Map failed to initialize</strong>
+            {viewerInitError}
+          </div>
+        </div>
+      )}
       <div
         ref={containerRef}
         style={{
@@ -676,11 +673,7 @@ const MapView = ({
           {visibleEntities.map((s) => s.id).join(', ')}
         </div>
         <div style={{ marginTop: 8, opacity: 0.9, lineHeight: 1.4 }}>
-          <strong>Map</strong> (Cesium):{' '}
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>W</kbd>
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>A</kbd>
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>S</kbd>
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>D</kbd> rotate view. Scroll wheel zooms.
+          <strong>Map</strong>: default Cesium camera (mouse / touch). Use the viewer’s help (?) control for gestures.
         </div>
         <div style={{ marginTop: 6, opacity: 0.9, lineHeight: 1.4 }}>
           <strong>Movement plan</strong>: select a movable unit → <strong>right-click</strong> waypoints →{' '}

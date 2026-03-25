@@ -20,7 +20,8 @@ export const EntityDtoSchema = z.object({
   allegiance: z.enum(['hostile', 'friendly']),
   lat_deg: z.number(),
   lon_deg: z.number(),
-  hae_m: z.number(),
+  /** WGS84 height above ellipsoid (international feet). */
+  hae_ft: z.number(),
   heading_deg: z.number(),
   sidc: z.string(),
   movable: z.boolean().optional(),

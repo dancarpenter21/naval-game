@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import io from 'socket.io-client';
 import Tabs, { Tab } from './components/Tabs';
-import MapView from './components/MapView';
+
+/** Lazy so the shell (tabs, session modal) renders before the ~large Cesium chunk downloads. */
+const MapView = lazy(() => import('./components/MapView'));
 import SimulationSpeedDial from './components/SimulationSpeedDial';
 import SessionChatPanel from './components/SessionChatPanel';
 import SyncMatrixView from './components/SyncMatrixView';
@@ -311,14 +313,32 @@ function App() {
         }
       >
         <Tab label="Map">
-          <MapView
-            key={session?.id ?? 'no-session'}
-            socket={socket}
-            session={session}
-            entities={worldEntities}
-            selectedEntityId={mapSelectedEntityId}
-            onSelectedEntityIdChange={setMapSelectedEntityId}
-          />
+          <Suspense
+            fallback={
+              <div
+                style={{
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#121212',
+                  color: 'rgba(255,255,255,0.75)',
+                  fontSize: 14,
+                }}
+              >
+                Loading map…
+              </div>
+            }
+          >
+            <MapView
+              key={session?.id ?? 'no-session'}
+              socket={socket}
+              session={session}
+              entities={worldEntities}
+              selectedEntityId={mapSelectedEntityId}
+              onSelectedEntityIdChange={setMapSelectedEntityId}
+            />
+          </Suspense>
         </Tab>
         <Tab label="Sync Matrix">
           <SyncMatrixView

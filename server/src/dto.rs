@@ -43,7 +43,8 @@ pub struct EntitySnapshotDto {
     pub allegiance: Allegiance,
     pub lat_deg: f64,
     pub lon_deg: f64,
-    pub hae_m: f64,
+    /// Height above WGS84 ellipsoid (international feet).
+    pub hae_ft: f64,
     pub heading_deg: f64,
     pub sidc: String,
     /// False if the entity has no `movement` component (cannot receive movement orders).

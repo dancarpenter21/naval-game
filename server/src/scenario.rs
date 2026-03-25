@@ -20,7 +20,7 @@ pub enum ScenarioEntityRef {
         #[serde(default)]
         lon_deg: Option<f64>,
         #[serde(default)]
-        hae_m: Option<f64>,
+        hae_ft: Option<f64>,
         #[serde(default)]
         heading_deg: Option<f64>,
     },
@@ -391,7 +391,7 @@ blue_entities:
                 id: "frigate".into(),
                 lat_deg: Some(10.0),
                 lon_deg: None,
-                hae_m: None,
+                hae_ft: None,
                 heading_deg: Some(45.0),
             }]
         );
@@ -401,7 +401,7 @@ blue_entities:
                 id: "blue-airplane".into(),
                 lat_deg: None,
                 lon_deg: Some(-20.0),
-                hae_m: None,
+                hae_ft: None,
                 heading_deg: None,
             }]
         );

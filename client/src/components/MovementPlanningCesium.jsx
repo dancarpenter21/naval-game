@@ -5,6 +5,7 @@ import {
   geodesicPointTowardFromCenter,
 } from '../geo/wgs84Geodesic';
 import { mapClickDebug } from '../utils/mapClickDebug';
+import { haeFeetToMeters } from '../units/length';
 
 const MIN_ORBIT_RADIUS_M = 75;
 
@@ -43,13 +44,14 @@ function removePreviewEntities(viewer) {
   toRemove.forEach((e) => viewer.entities.remove(e));
 }
 
-/** @param {[number, number][]} latLonPairs — [lat, lon] */
-function llToPositions(latLonPairs) {
+/** @param {[number, number][]} latLonPairs — [lat, lon]; @param haeM WGS84 height (m) for Cesium. */
+function llToPositionsWithHae(latLonPairs, haeM) {
+  const h = Number.isFinite(haeM) ? haeM : 0;
   const flat = [];
   for (const [lat, lon] of latLonPairs) {
-    flat.push(lon, lat);
+    flat.push(lon, lat, h);
   }
-  return Cesium.Cartesian3.fromDegreesArray(flat);
+  return Cesium.Cartesian3.fromDegreesArrayHeights(flat);
 }
 
 /**
@@ -286,8 +288,16 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
     }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
     return () => {
-      canvas.removeEventListener('contextmenu', onCtx);
-      handler.destroy();
+      try {
+        canvas.removeEventListener('contextmenu', onCtx);
+      } catch {
+        /* canvas may be gone if viewer was destroyed */
+      }
+      try {
+        handler.destroy();
+      } catch {
+        /* may run after viewer teardown */
+      }
     };
   }, [
     viewer,
@@ -356,11 +366,13 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
     if (!viewer) return;
     removePreviewEntities(viewer);
 
+    const planHaeM = haeFeetToMeters(selectedEntity?.hae_ft);
+
     for (let i = 0; i < planWaypoints.length; i++) {
       const w = planWaypoints[i];
       viewer.entities.add({
         id: `preview-wp-${i}`,
-        position: Cesium.Cartesian3.fromDegrees(w.lng, w.lat, 0),
+        position: Cesium.Cartesian3.fromDegrees(w.lng, w.lat, planHaeM),
         point: {
           pixelSize: greenWaypoint.pixelSize,
           color: greenWaypoint.color,
@@ -375,10 +387,9 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
       viewer.entities.add({
         id: 'preview-path',
         polyline: {
-          positions: llToPositions(pathPositions),
+          positions: llToPositionsWithHae(pathPositions, planHaeM),
           width: 3,
           material: greenLine.color,
-          clampToGround: true,
         },
       });
     }
@@ -387,10 +398,9 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
       viewer.entities.add({
         id: 'preview-orbit-approach',
         polyline: {
-          positions: llToPositions(orbitApproachSegment),
+          positions: llToPositionsWithHae(orbitApproachSegment, planHaeM),
           width: 2,
           material: Cesium.Color.CYAN.withAlpha(0.7),
-          clampToGround: true,
         },
       });
     }
@@ -399,10 +409,9 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
       viewer.entities.add({
         id: 'preview-racetrack-ab',
         polyline: {
-          positions: llToPositions(racetrackLine),
+          positions: llToPositionsWithHae(racetrackLine, planHaeM),
           width: 2,
           material: Cesium.Color.LIME.withAlpha(0.85),
-          clampToGround: true,
         },
       });
     }
@@ -419,7 +428,7 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
       );
       viewer.entities.add({
         id: 'preview-orbit-circle',
-        position: Cesium.Cartesian3.fromDegrees(orbitPreview.center.lng, orbitPreview.center.lat, 0),
+        position: Cesium.Cartesian3.fromDegrees(orbitPreview.center.lng, orbitPreview.center.lat, planHaeM),
         ellipse: {
           semiMajorAxis: r,
           semiMinorAxis: r,
@@ -427,7 +436,7 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
           outline: true,
           outlineColor: Cesium.Color.LIME,
           outlineWidth: 2,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          height: 0,
         },
       });
     }
@@ -447,7 +456,7 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
         position: Cesium.Cartesian3.fromDegrees(
           racetrackRadiusPreview.center.lng,
           racetrackRadiusPreview.center.lat,
-          0,
+          planHaeM,
         ),
         ellipse: {
           semiMajorAxis: r,
@@ -456,18 +465,21 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
           outline: true,
           outlineColor: Cesium.Color.MEDIUMSPRINGGREEN,
           outlineWidth: 2,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          height: 0,
         },
       });
     }
 
     return () => {
-      if (viewer && typeof viewer.isDestroyed === 'function' && !viewer.isDestroyed()) {
+      try {
         removePreviewEntities(viewer);
+      } catch {
+        /* viewer may already be destroyed */
       }
     };
   }, [
     viewer,
+    selectedEntity,
     planWaypoints,
     pathPositions,
     orbitApproachSegment,

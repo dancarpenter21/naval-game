@@ -45,7 +45,8 @@ use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBST
 struct TransformWorld {
     lat_deg: f64,
     lon_deg: f64,
-    hae_m: f64,
+    /// WGS84 height above ellipsoid (international feet).
+    hae_ft: f64,
     heading_deg: f64,
 }
 
@@ -251,7 +252,10 @@ fn collect_satellite_rows(world: &[EntityState]) -> Vec<(String, f64, f64, f64)>
         .iter()
         .filter_map(|e| {
             let sp = e.space.as_ref()?;
-            let fr = space::footprint_radius_m(e.transform.hae_m, sp.config.fov_half_angle_deg);
+            let fr = space::footprint_radius_m(
+                earth::feet_to_meters(e.transform.hae_ft),
+                sp.config.fov_half_angle_deg,
+            );
             Some((e.id.clone(), e.transform.lat_deg, e.transform.lon_deg, fr))
         })
         .collect()
@@ -270,10 +274,10 @@ fn propagate_space_entities(world: &mut [EntityState], t: DateTime<Utc>) {
         let Some(ref sp) = e.space else {
             continue;
         };
-        if let Ok((lat, lon, hae, snap)) = space::propagate_and_snapshot(sp, t) {
+        if let Ok((lat, lon, hae_m, snap)) = space::propagate_and_snapshot(sp, t) {
             e.transform.lat_deg = lat;
             e.transform.lon_deg = lon;
-            e.transform.hae_m = hae;
+            e.transform.hae_ft = earth::meters_to_feet(hae_m);
             e.space_overlay = Some(snap);
         }
     }
@@ -316,7 +320,7 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 allegiance: s.allegiance.clone(),
                 lat_deg: s.transform.lat_deg,
                 lon_deg: s.transform.lon_deg,
-                hae_m: s.transform.hae_m,
+                hae_ft: s.transform.hae_ft,
                 heading_deg: s.transform.heading_deg,
                 sidc: s.symbol.sidc.clone(),
                 movable: s.movement.is_some(),
@@ -616,7 +620,7 @@ fn apply_scenario_transform_overrides(t: &mut TransformWorld, entry: &ScenarioEn
     let ScenarioEntityRef::Placement {
         lat_deg,
         lon_deg,
-        hae_m,
+        hae_ft,
         heading_deg,
         ..
     } = entry
@@ -629,8 +633,8 @@ fn apply_scenario_transform_overrides(t: &mut TransformWorld, entry: &ScenarioEn
     if let Some(v) = lon_deg {
         t.lon_deg = *v;
     }
-    if let Some(v) = hae_m {
-        t.hae_m = *v;
+    if let Some(v) = hae_ft {
+        t.hae_ft = *v;
     }
     if let Some(v) = heading_deg {
         t.heading_deg = *v;
@@ -657,7 +661,7 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
                     } else {
                         format!("{}-{}", entity_template.id, i + 1)
                     };
-                    let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_m: 0.0, heading_deg: 0.0 };
+                    let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_ft: 0.0, heading_deg: 0.0 };
                     entities.push(entity_state_from_template(entity_template, instance_id, transform));
                 }
             } else {
@@ -675,14 +679,14 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
                 continue;
             };
             let instance_id = entity_template.id.clone();
-            let mut transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_m: 0.0, heading_deg: 0.0 };
+            let mut transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_ft: 0.0, heading_deg: 0.0 };
             apply_scenario_transform_overrides(&mut transform, entry);
             let entity = entity_state_from_template(entity_template, instance_id, transform);
             entities.push(entity);
         }
     } else {
         for entity_template in &world_template.entities {
-            let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_m: 0.0, heading_deg: 0.0 };
+            let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_ft: 0.0, heading_deg: 0.0 };
             entities.push(entity_state_from_template(
                 entity_template,
                 entity_template.id.clone(),
