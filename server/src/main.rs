@@ -37,6 +37,7 @@ use dto::{
     JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto, PlayersListRequestDto,
     RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto, SetTimeScaleDto,
     EntitySnapshotDto, LatLonDegDto, SpaceCoverageEventDto, SnapshotRequestDto, StopSessionDto,
+    ScenarioSummaryDto,
 };
 use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
 
@@ -131,6 +132,102 @@ impl EntityState {
         self.symbol.sidc = updated_sidc;
         true
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectiveState {
+    Pending,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjectiveTracker {
+    pub id: String,
+    pub config: scenario::ObjectiveConfig,
+    pub state: ObjectiveState,
+}
+
+impl ObjectiveTracker {
+    pub fn new(config: scenario::ObjectiveConfig) -> Self {
+        Self {
+            id: config.id.clone(),
+            config,
+            state: ObjectiveState::Pending,
+        }
+    }
+}
+
+pub fn evaluate_team_objectives(
+    trackers: &mut [ObjectiveTracker],
+    world: &[EntityState],
+    sim_elapsed_s: f64,
+) -> bool {
+    let mut all_required_completed = true;
+    let mut any_required_failed = false;
+
+    for t in trackers.iter_mut() {
+        if t.state != ObjectiveState::Pending {
+            if t.config.required {
+                if t.state == ObjectiveState::Failed {
+                    any_required_failed = true;
+                }
+                if t.state != ObjectiveState::Completed {
+                    all_required_completed = false;
+                }
+            }
+            continue;
+        }
+
+        match &t.config.condition {
+            scenario::ObjectiveCondition::SurviveTime { duration_s } => {
+                if sim_elapsed_s >= *duration_s {
+                    t.state = ObjectiveState::Completed;
+                }
+            }
+            scenario::ObjectiveCondition::DestroyEntity { target_id, time_limit_s } => {
+                let mut found = false;
+                for e in world.iter() {
+                    if e.id == *target_id {
+                        found = true;
+                        if matches!(e.status(), Some(sidc::Status::PresentDestroyed)) {
+                            t.state = ObjectiveState::Completed;
+                        } else if let Some(limit) = time_limit_s {
+                            if sim_elapsed_s > *limit {
+                                t.state = ObjectiveState::Failed;
+                            }
+                        }
+                        break;
+                    }
+                }
+                if !found {
+                    t.state = ObjectiveState::Completed;
+                }
+            }
+            scenario::ObjectiveCondition::ReachArea { target_id, lat_deg, lon_deg, radius_m } => {
+                for e in world.iter() {
+                    if e.id == *target_id {
+                        let d = earth::geodesic_distance_m(e.transform.lat_deg, e.transform.lon_deg, *lat_deg, *lon_deg);
+                        if d <= *radius_m {
+                            t.state = ObjectiveState::Completed;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if t.config.required {
+            if t.state == ObjectiveState::Failed {
+                any_required_failed = true;
+            }
+            if t.state != ObjectiveState::Completed {
+                all_required_completed = false;
+            }
+        }
+    }
+
+    !trackers.is_empty() && all_required_completed && !any_required_failed
 }
 
 fn on_session_closed_stub(_public: &SessionPublic) {
@@ -431,7 +528,7 @@ fn scenario_summary(world: &WorldTemplate, loaded: &LoadedScenario) -> ScenarioS
         id: loaded.id.clone(),
         name: loaded.display_name(),
         description: loaded.config.description.clone(),
-        win_conditions: loaded.config.win_conditions.clone(),
+        win_conditions: loaded.formatted_win_conditions(),
         red: loaded
             .config
             .red_entities
@@ -718,6 +815,9 @@ fn spawn_game_loop(
     io: SocketIo,
     wall_tick: Duration,
     space_tick_interval: u64,
+    mut objectives_blue: Vec<ObjectiveTracker>,
+    mut objectives_red: Vec<ObjectiveTracker>,
+    scenario_summary_dto: ScenarioSummaryDto,
 ) -> (JoinHandle<()>, tokio::sync::oneshot::Sender<()>) {
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -726,6 +826,7 @@ fn spawn_game_loop(
         ticker.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
         let mut tick_count: u64 = 0;
         let mut coverage_prev: HashSet<(String, String)> = HashSet::new();
+        let mut game_over_emitted = false;
         loop {
             tokio::select! {
                 _ = &mut stop_rx => {
@@ -789,6 +890,19 @@ fn spawn_game_loop(
 
                         entity_snapshots_from_world(&guard)
                     };
+                    
+                    if !game_over_emitted {
+                        let mut guard = world.lock().await;
+                        let blue_wins = evaluate_team_objectives(&mut objectives_blue, &guard, sim_end_elapsed_s);
+                        let red_wins = evaluate_team_objectives(&mut objectives_red, &guard, sim_end_elapsed_s);
+                        if blue_wins || red_wins {
+                            game_over_emitted = true;
+                            // Optionally attach who won, but the struct alone signals end of game
+                            io.to(session_id.clone())
+                                .emit("game_over", scenario_summary_dto.clone())
+                                .ok();
+                        }
+                    }
 
                     let dto = {
                         let mut t = timing.lock().await;
@@ -939,6 +1053,15 @@ fn on_connect(
             let wall_tick = Duration::from_secs_f64(wall_dt_s);
             let timing = Arc::new(Mutex::new(SimTimingState::new_now(wall_dt_s)));
             let space_tick_interval = space_tick_interval_from_env();
+            
+            let mut obs_b = Vec::new();
+            let mut obs_r = Vec::new();
+            if let Some(ref objs) = scenario.config.objectives {
+                obs_b = objs.blue.iter().map(|c: &scenario::ObjectiveConfig| ObjectiveTracker::new(c.clone())).collect();
+                obs_r = objs.red.iter().map(|c: &scenario::ObjectiveConfig| ObjectiveTracker::new(c.clone())).collect();
+            }
+            let summary_dto = scenario_summary(&world_template, scenario).to_dto();
+
             let (loop_handle, stop_tx) = spawn_game_loop(
                 public.id.clone(),
                 public.name.clone(),
@@ -947,6 +1070,9 @@ fn on_connect(
                 io.clone(),
                 wall_tick,
                 space_tick_interval,
+                obs_b,
+                obs_r,
+                summary_dto,
             );
             let world_for_session = world.clone();
             let mut player_teams = HashMap::new();

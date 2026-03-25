@@ -7,9 +7,21 @@ name: "Example encounter"
 description: |
   A hostile surface combatant is operating near a friendly air asset.
   Use this scenario to exercise basic tracking and coordination between red and blue forces.
-win_conditions: |
-  Blue: maintain positive identification of the red unit and avoid engagement unless authorized.
-  Red: complete patrol box without being neutralized (placeholder objectives).
+objectives:
+  blue:
+    - id: avoid_engagement
+      type: survive_time
+      params:
+        duration_s: 3600
+      required: true
+      description: "Maintain positive identification and avoid engagement for 1 hour."
+  red:
+    - id: patrol_box
+      type: survive_time
+      params:
+        duration_s: 1800
+      required: true
+      description: "Complete patrol box without being neutralized."
 red_entities:
   - id: frigate
     lat_deg: 34.8

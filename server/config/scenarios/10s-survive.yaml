@@ -1,0 +1,18 @@
+name: "10-Second Survival Test"
+description: "A simple scenario where Blue wins by surviving for 10 seconds. Useful for validating objective evaluations."
+objectives:
+  blue:
+    - id: survive_test
+      type: survive_time
+      params:
+        duration_s: 10.0
+      required: true
+      description: "Survive for exactly 10 seconds."
+red_entities: []
+blue_entities:
+  - id: blue-airplane
+    lat_deg: 0.0
+    lon_deg: 0.0
+    hae_m: 1000.0
+    heading_deg: 0.0
+spawns: []
