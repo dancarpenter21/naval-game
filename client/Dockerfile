@@ -1,7 +1,7 @@
 FROM node:20-alpine
 WORKDIR /app
 
-# npm dependencies (e.g. satellite.js, leaflet) are declared in package.json / package-lock.json;
+# npm dependencies (e.g. cesium, satellite.js) are declared in package.json / package-lock.json;
 # `npm ci` or `npm install` in this image installs them — no host Node install required.
 
 COPY package*.json ./

@@ -193,20 +193,11 @@ a.menu-item.menu-link {
   background: rgba(255, 80, 80, 0.3);
 }
 
-/* Ensure Leaflet controls don't overlap strangely with our UI if we add more */
-.leaflet-container {
+/* Cesium viewer fills the map tab; keep typography consistent with the rest of the app */
+.cesium-viewer {
   font-family: 'Inter', sans-serif;
 }
 
-/*
- * Milsymbol (and similar) put SVG <text>/<path> inside divIcon. Hit-testing often lands on
- * those nodes, so Leaflet fires map-level events instead of Marker click. Disable pointer
- * events on descendants so the marker icon box receives the click.
- */
-.leaflet-marker-icon {
-  pointer-events: auto;
-}
-
-.leaflet-marker-icon * {
-  pointer-events: none;
+.cesium-viewer canvas {
+  outline: none;
 }

@@ -14,14 +14,14 @@
     "postinstall": "node scripts/vendor-milsymbol.cjs"
   },
   "dependencies": {
+    "cesium": "1.125.0",
     "geographiclib-geodesic": "^2.2.0",
-    "leaflet": "^1.9.4",
     "milsymbol": "^3.0.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-leaflet": "^5.0.0",
     "satellite.js": "^6.0.2",
     "socket.io-client": "^4.8.3",
+    "vite-plugin-cesium": "1.2.22",
     "zod": "^4.3.6"
   },
   "devDependencies": {
