@@ -6,6 +6,10 @@ The game is a real-time strategy game where players must work together to overco
 
 Players must work together to coordinate their attacks to overcome red fleet defenses and destroy the red flagship.
 
+## Cloning the repository
+
+**[Git LFS](https://git-lfs.com/)** is required so large binary assets (for example the NASA Blue Marble imagery under `client/public/`) are fetched as real files, not Git LFS pointer stubs. Install Git LFS, run **`git lfs install`** once on your machine (or rely on your Git client’s LFS integration), then clone as usual. If you already cloned without LFS, install it and run **`git lfs pull`** in the repository.
+
 Most of the game takes place on the 2D map. There is also a page for unit descriptions and capabilities (pulled from Jane's Fighting Ships) and a page for mission schedules so players can coordinate their actions.
 
 ## Architecture
