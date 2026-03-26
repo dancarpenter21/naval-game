@@ -55,7 +55,9 @@ function llToPositionsWithHae(latLonPairs, haeM) {
 }
 
 /**
- * Right-click waypoints, O+drag orbit, R + click A + click B + drag radius (racetrack).
+ * Right-click waypoints.
+ * With `O` held: right-click + drag orbit.
+ * With `R` held: right-click A, right-click B, then right-click + drag turn radius (racetrack).
  * Requires an initialized Cesium.Viewer.
  */
 const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
@@ -80,6 +82,11 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
   const racetrackRef = useRef(racetrackDraft);
   const [orbitPreview, setOrbitPreview] = useState(null);
   const [racetrackRadiusPreview, setRacetrackRadiusPreview] = useState(null);
+  const originalCameraControllerFlagsRef = useRef(null);
+  const rightMousePlanningSuppressedRef = useRef(false);
+  const rightMouseDownRef = useRef(false);
+  /** Pointer id when O/R station planning captured the canvas (so pointerup fires reliably after drag). */
+  const stationPointerIdRef = useRef(null);
 
   useImperativeHandle(
     ref,
@@ -125,12 +132,13 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
     (edgeLatLng) => {
       if (!dragRef.current || dragRef.current.kind !== 'orbit') return;
       const start = dragRef.current.center;
-      clearOrbitPreview();
 
       if (!edgeLatLng || !selectedEntity?.id || !socket || !sessionId) return;
 
       const radiusM = geodesicDistanceM(start.lat, start.lng, edgeLatLng.lat, edgeLatLng.lng);
       if (radiusM < MIN_ORBIT_RADIUS_M) return;
+
+      clearOrbitPreview();
 
       const deltaLon = edgeLatLng.lng - start.lng;
       const clockwise = deltaLon > 0;
@@ -139,11 +147,13 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
         session_id: sessionId,
         entity_id: selectedEntity.id,
         waypoints: waypointPayload(planWaypointsRef.current),
-        kind: 'orbit',
-        center_lat_deg: start.lat,
-        center_lon_deg: start.lng,
-        radius_m: radiusM,
-        clockwise,
+        order: {
+          kind: 'orbit',
+          center_lat_deg: start.lat,
+          center_lon_deg: start.lng,
+          radius_m: radiusM,
+          clockwise,
+        },
       });
       onPlanCommitted?.();
     },
@@ -156,13 +166,14 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
       const b = dragRef.current.center;
       const draft = racetrackRef.current;
       const a = draft.a;
-      clearRacetrackDrag();
-      setRacetrackDraft({ phase: 'idle', a: null, b: null });
 
       if (!edgeLatLng || !a || !selectedEntity?.id || !socket || !sessionId) return;
 
       const radiusM = geodesicDistanceM(b.lat, b.lng, edgeLatLng.lat, edgeLatLng.lng);
       if (radiusM < MIN_ORBIT_RADIUS_M) return;
+
+      clearRacetrackDrag();
+      setRacetrackDraft({ phase: 'idle', a: null, b: null });
 
       const cosA = Math.cos((a.lat * Math.PI) / 180);
       const cosB = Math.cos((b.lat * Math.PI) / 180);
@@ -177,35 +188,39 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
         session_id: sessionId,
         entity_id: selectedEntity.id,
         waypoints: waypointPayload(planWaypointsRef.current),
-        kind: 'racetrack',
-        point_a_lat_deg: a.lat,
-        point_a_lon_deg: a.lng,
-        point_b_lat_deg: b.lat,
-        point_b_lon_deg: b.lng,
-        orbit_distance_m: radiusM,
-        racetrack_clockwise,
+        order: {
+          kind: 'racetrack',
+          point_a_lat_deg: a.lat,
+          point_a_lon_deg: a.lng,
+          point_b_lat_deg: b.lat,
+          point_b_lon_deg: b.lng,
+          orbit_distance_m: radiusM,
+          racetrack_clockwise,
+        },
       });
       onPlanCommitted?.();
     },
     [clearRacetrackDrag, onPlanCommitted, selectedEntity, sessionId, socket, setRacetrackDraft],
   );
 
-  useEffect(() => {
-    const onWinMouseUp = () => {
-      if (!dragRef.current) return;
-      const edge = lastEdgeRef.current ?? dragRef.current.center;
-      if (dragRef.current.kind === 'orbit') finishOrbitDrag(edge);
-      else finishRacetrackDrag(edge);
-    };
-    window.addEventListener('mouseup', onWinMouseUp);
-    return () => window.removeEventListener('mouseup', onWinMouseUp);
+  const commitStationDragIfAny = useCallback(() => {
+    if (!dragRef.current) return;
+    const kind = dragRef.current.kind;
+    if (kind !== 'orbit' && kind !== 'racetrack') return;
+    const edge = lastEdgeRef.current ?? dragRef.current.center;
+    if (kind === 'orbit') finishOrbitDrag(edge);
+    else finishRacetrackDrag(edge);
   }, [finishOrbitDrag, finishRacetrackDrag]);
 
   useEffect(() => {
     if (oHeld || rHeld) return;
     if (dragRef.current) {
-      if (dragRef.current.kind === 'orbit') clearOrbitPreview();
-      else clearRacetrackDrag();
+      // Don't cancel an in-progress drag just because the modifier key was released.
+      // We commit on mouse-up; clearing early would drop the order.
+      if (!rightMouseDownRef.current) {
+        if (dragRef.current.kind === 'orbit') clearOrbitPreview();
+        else clearRacetrackDrag();
+      }
     }
   }, [oHeld, rHeld, clearOrbitPreview, clearRacetrackDrag]);
 
@@ -218,25 +233,193 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
 
     const handler = new Cesium.ScreenSpaceEventHandler(canvas);
 
+    const controller = viewer.scene.screenSpaceCameraController;
+    const suppressRightMouseNavigation = () => {
+      if (!canPlan) return;
+      if (!originalCameraControllerFlagsRef.current) {
+        const possibleFlags = [
+          'enableTranslate',
+          'enableLook',
+          'enableRotate',
+          'enableZoom',
+          'enableInputs',
+        ];
+        const snapshot = {};
+        for (const key of possibleFlags) {
+          if (Object.prototype.hasOwnProperty.call(controller, key)) {
+            snapshot[key] = controller[key];
+          }
+        }
+        originalCameraControllerFlagsRef.current = snapshot;
+      }
+      if ('enableTranslate' in originalCameraControllerFlagsRef.current) controller.enableTranslate = false;
+      if ('enableLook' in originalCameraControllerFlagsRef.current) controller.enableLook = false;
+      if ('enableRotate' in originalCameraControllerFlagsRef.current) controller.enableRotate = false;
+      if ('enableZoom' in originalCameraControllerFlagsRef.current) controller.enableZoom = false;
+      if ('enableInputs' in originalCameraControllerFlagsRef.current) controller.enableInputs = false;
+      rightMousePlanningSuppressedRef.current = true;
+    };
+    const restoreRightMouseNavigation = () => {
+      if (!rightMousePlanningSuppressedRef.current) return;
+      const flags = originalCameraControllerFlagsRef.current;
+      if (flags) {
+        if ('enableTranslate' in flags) controller.enableTranslate = flags.enableTranslate;
+        if ('enableLook' in flags) controller.enableLook = flags.enableLook;
+        if ('enableRotate' in flags) controller.enableRotate = flags.enableRotate;
+        if ('enableZoom' in flags) controller.enableZoom = flags.enableZoom;
+        if ('enableInputs' in flags) controller.enableInputs = flags.enableInputs;
+      }
+      rightMousePlanningSuppressedRef.current = false;
+    };
+
+    /**
+     * Pointer capture on secondary button while O/R station mode is active guarantees pointerup
+     * reaches us after drag (Cesium often misses window mouseup / wrong MouseEvent.button on canvas).
+     */
+    const onCanvasPointerDownCapture = (e) => {
+      if (!canPlan) return;
+      if (e.button !== 2) return;
+      rightMouseDownRef.current = true;
+      if (stationModifierActive) {
+        try {
+          canvas.setPointerCapture(e.pointerId);
+          stationPointerIdRef.current = e.pointerId;
+        } catch {
+          stationPointerIdRef.current = null;
+        }
+      }
+      try {
+        suppressRightMouseNavigation();
+      } catch {
+        /* ignore */
+      }
+      try {
+        e.preventDefault?.();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const onDocPointerUpCapture = (e) => {
+      if (stationPointerIdRef.current !== null && e.pointerId !== stationPointerIdRef.current) {
+        return;
+      }
+      if (stationPointerIdRef.current !== null && e.pointerId === stationPointerIdRef.current) {
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        stationPointerIdRef.current = null;
+      }
+      rightMouseDownRef.current = false;
+      try {
+        restoreRightMouseNavigation();
+      } catch {
+        /* ignore */
+      }
+
+      if (!dragRef.current) return;
+      const k = dragRef.current.kind;
+      if (k !== 'orbit' && k !== 'racetrack') return;
+      if (e.pointerType === 'mouse' && e.button !== 2) return;
+
+      // Use pointerup coordinates as the "edge" lat/lon so racetrack commits even if Cesium
+      // didn't fire any MOUSE_MOVE events during the drag.
+      if (
+        e.pointerType === 'mouse' &&
+        Number.isFinite(e.clientX) &&
+        Number.isFinite(e.clientY)
+      ) {
+        try {
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          const ll = pickLatLng(viewer, new Cesium.Cartesian2(x, y));
+          if (ll) lastEdgeRef.current = { lat: ll.lat, lng: ll.lng };
+        } catch {
+          /* ignore pointer->lat/lon conversion failures */
+        }
+      }
+      commitStationDragIfAny();
+    };
+
+    const onDocPointerCancelCapture = (e) => {
+      if (stationPointerIdRef.current !== null && e.pointerId === stationPointerIdRef.current) {
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        stationPointerIdRef.current = null;
+      }
+      rightMouseDownRef.current = false;
+      try {
+        restoreRightMouseNavigation();
+      } catch {
+        /* ignore */
+      }
+      if (dragRef.current?.kind === 'orbit') clearOrbitPreview();
+      else if (dragRef.current?.kind === 'racetrack') clearRacetrackDrag();
+    };
+
+    /** No PointerEvent (very old browsers): commit station drag on document mouseup, right button. */
+    const onDocMouseUpCapture = (e) => {
+      if (window.PointerEvent) return;
+      if (!dragRef.current) return;
+      if (dragRef.current.kind !== 'orbit' && dragRef.current.kind !== 'racetrack') return;
+      if (e.button !== 2) return;
+      rightMouseDownRef.current = false;
+      try {
+        restoreRightMouseNavigation();
+      } catch {
+        /* ignore */
+      }
+      commitStationDragIfAny();
+    };
+
+    canvas.addEventListener('pointerdown', onCanvasPointerDownCapture, true);
+    document.addEventListener('pointerup', onDocPointerUpCapture, true);
+    document.addEventListener('pointercancel', onDocPointerCancelCapture, true);
+    document.addEventListener('mouseup', onDocMouseUpCapture, true);
+
     handler.setInputAction((click) => {
       mapClickDebug('planning:contextmenu', { canPlan, screenPosition: click.position });
       if (!canPlan) return;
+      if (!click.position) return;
+
       const ll = pickLatLng(viewer, click.position);
       if (!ll) return;
-      mapClickDebug('planning:waypoint:add', ll);
-      setPlanWaypoints((prev) => [...prev, { lat: ll.lat, lng: ll.lng }]);
+
+      // If a station drag is in progress, RIGHT_CLICK commits it.
+      if (dragRef.current) {
+        if (dragRef.current.kind === 'orbit') finishOrbitDrag(ll);
+        else finishRacetrackDrag(ll);
+        return;
+      }
+
+      // Otherwise: do nothing. Waypoints are added on RIGHT_DOWN.
     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
 
     handler.setInputAction((movement) => {
       if (!canPlan) return;
+      suppressRightMouseNavigation();
       const pos = movement.position;
       if (!pos) return;
-      if (!stationModifierActive) return;
 
       const ll = pickLatLng(viewer, pos);
       if (!ll) return;
 
-      mapClickDebug('planning:mousedown:station-capture', { oHeld, rHeld });
+      // When no station modifier is held, RIGHT_DOWN becomes waypoint placement.
+      if (!stationModifierActive) {
+        if (dragRef.current) return;
+        if (oHeld || rHeld) return; // defensive: shouldn't happen if stationModifierActive is correct
+        mapClickDebug('planning:waypoint:add', ll);
+        setPlanWaypoints((prev) => [...prev, { lat: ll.lat, lng: ll.lng }]);
+        return;
+      }
+
+      mapClickDebug('planning:rightdown:station-capture', { oHeld, rHeld });
 
       if (oHeld && !rHeld) {
         dragRef.current = { kind: 'orbit', center: { lat: ll.lat, lng: ll.lng } };
@@ -262,7 +445,7 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
           setOrbitPreview(null);
         }
       }
-    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+    }, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
 
     handler.setInputAction((movement) => {
       if (!dragRef.current) return;
@@ -278,16 +461,29 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
       }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-    handler.setInputAction((click) => {
-      if (!click.position) return;
-      const ll = pickLatLng(viewer, click.position);
-      if (!ll) return;
-      if (!dragRef.current) return;
-      if (dragRef.current.kind === 'orbit') finishOrbitDrag(ll);
-      else finishRacetrackDrag(ll);
-    }, Cesium.ScreenSpaceEventType.LEFT_UP);
+    // RIGHT_UP is intentionally unused: Cesium's internal right-mouse events are more consistent
+    // when we commit on RIGHT_CLICK (after the release/click cycle).
+    handler.setInputAction(() => {}, Cesium.ScreenSpaceEventType.RIGHT_UP);
 
     return () => {
+      try {
+        canvas.removeEventListener('pointerdown', onCanvasPointerDownCapture, true);
+      } catch {
+        /* ignore */
+      }
+      try {
+        document.removeEventListener('pointerup', onDocPointerUpCapture, true);
+        document.removeEventListener('pointercancel', onDocPointerCancelCapture, true);
+        document.removeEventListener('mouseup', onDocMouseUpCapture, true);
+      } catch {
+        /* ignore */
+      }
+      stationPointerIdRef.current = null;
+      try {
+        restoreRightMouseNavigation();
+      } catch {
+        /* ignore: viewer might already be destroyed */
+      }
       try {
         canvas.removeEventListener('contextmenu', onCtx);
       } catch {
@@ -309,6 +505,9 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
     setRacetrackDraft,
     finishOrbitDrag,
     finishRacetrackDrag,
+    commitStationDragIfAny,
+    clearOrbitPreview,
+    clearRacetrackDrag,
   ]);
 
   const pathPositions = useMemo(() => {
@@ -378,7 +577,6 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
           color: greenWaypoint.color,
           outlineColor: greenWaypoint.outlineColor,
           outlineWidth: greenWaypoint.outlineWidth,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
     }

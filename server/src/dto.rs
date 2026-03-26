@@ -23,9 +23,15 @@ pub struct SpaceSnapshotDto {
     pub line1: String,
     pub line2: String,
     pub fov_half_angle_deg: f64,
+    /// Sensor / nadir cone ground projection (from `fov_half_angle_deg`), not “who can see the satellite”.
     pub footprint_radius_m: f64,
+    /// Ground distance from subsatellite point to horizon limit: surface observers inside this cap have
+    /// line of sight to the satellite (spherical Earth; independent of sensor FoV).
+    pub visibility_cap_radius_m: f64,
     pub ground_track_deg: Vec<LatLonDegDto>,
     pub future_footprint_deg: Vec<LatLonDegDto>,
+    /// Closed ring (first point repeated at end): FoV swath along `ground_track_deg` on the ellipsoid.
+    pub field_of_regard_polygon_deg: Vec<LatLonDegDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +67,9 @@ pub struct EntitySnapshotDto {
     /// Full planned path for map overlay (current position → waypoints → station).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_path_deg: Option<Vec<LatLonDegDto>>,
+    /// Active movement behavior from the sim (`cruise` until an order is applied).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub movement_kind: Option<String>,
     /// TLE / footprint / ground track when this entity is a space asset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space: Option<SpaceSnapshotDto>,
@@ -216,6 +225,9 @@ pub struct WaypointDto {
 }
 
 /// Client issues a movement order for a controllable unit (`movable: true` in snapshots).
+///
+/// The terminal station is nested under `order` (not flattened) so socket.io JSON matches
+/// serde’s tagged `MovementOrderDto` reliably across transports.
 #[derive(Debug, Deserialize)]
 pub struct IssueMovementOrderDto {
     pub session_id: String,
@@ -223,7 +235,6 @@ pub struct IssueMovementOrderDto {
     /// Intermediate fixes (0–n), visited in order before the terminal station.
     #[serde(default)]
     pub waypoints: Vec<WaypointDto>,
-    #[serde(flatten)]
     pub order: MovementOrderDto,
 }
 
@@ -251,5 +262,63 @@ pub enum MovementOrderDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct ErrorDto {
     pub message: String,
+}
+
+#[cfg(test)]
+mod issue_movement_order_tests {
+    use super::*;
+
+    #[test]
+    fn issue_movement_order_deserializes_orbit_payload_matching_client_emit() {
+        let v: IssueMovementOrderDto = serde_json::from_str(
+            r#"{
+                "session_id": "13c47fca",
+                "entity_id": "blue-airplane",
+                "waypoints": [],
+                "order": {
+                    "kind": "orbit",
+                    "center_lat_deg": 35.4,
+                    "center_lon_deg": -40.1,
+                    "radius_m": 5000.0,
+                    "clockwise": true
+                }
+            }"#,
+        )
+        .expect("serde_json must accept nested movement order (same shape as socket.io client)");
+        assert_eq!(v.session_id, "13c47fca");
+        assert_eq!(v.entity_id, "blue-airplane");
+        assert!(v.waypoints.is_empty());
+        assert!(matches!(
+            v.order,
+            MovementOrderDto::Orbit {
+                radius_m: 5000.0,
+                clockwise: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn issue_movement_order_deserializes_racetrack_payload_matching_client_emit() {
+        let v: IssueMovementOrderDto = serde_json::from_str(
+            r#"{
+                "session_id": "s",
+                "entity_id": "e",
+                "waypoints": [{"lat_deg": 35.0, "lon_deg": -40.0}],
+                "order": {
+                    "kind": "racetrack",
+                    "point_a_lat_deg": 35.0,
+                    "point_a_lon_deg": -40.0,
+                    "point_b_lat_deg": 35.1,
+                    "point_b_lon_deg": -40.1,
+                    "orbit_distance_m": 2000.0,
+                    "racetrack_clockwise": false
+                }
+            }"#,
+        )
+        .expect("racetrack order");
+        assert_eq!(v.waypoints.len(), 1);
+        assert!(matches!(v.order, MovementOrderDto::Racetrack { .. }));
+    }
 }
 

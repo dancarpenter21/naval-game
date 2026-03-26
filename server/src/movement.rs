@@ -28,6 +28,16 @@ pub enum StationPhase {
     },
 }
 
+/// Wire/API label for [`MovementMode`] (snapshots, debugging).
+pub fn movement_kind_wire(mode: &MovementMode) -> &'static str {
+    match mode {
+        MovementMode::Cruise => "cruise",
+        MovementMode::TransitWaypoints { .. } => "transit_waypoints",
+        MovementMode::Orbit { .. } => "orbit",
+        MovementMode::Racetrack { .. } => "racetrack",
+    }
+}
+
 /// How the unit advances each tick after a movement order (or default cruise).
 #[derive(Debug, Clone)]
 pub enum MovementMode {
@@ -518,5 +528,78 @@ pub fn display_path_polyline_deg(lat_deg: f64, lon_deg: f64, mode: &MovementMode
             append_racetrack_display(&mut out, lat_deg, lon_deg, loop_path_deg);
             Some(out)
         }
+    }
+}
+
+#[cfg(test)]
+mod integrate_tests {
+    use super::*;
+    use crate::earth;
+
+    #[test]
+    fn transit_steers_toward_first_waypoint() {
+        let station = StationPhase::Orbit {
+            center_lat_deg: 35.5,
+            center_lon_deg: -40.0,
+            radius_m: 5_000.0,
+            clockwise: true,
+        };
+        let mut lat_deg = 35.4;
+        let mut lon_deg = -40.1;
+        let mut heading_deg = 275.0;
+        let wp = (36.5, -41.0);
+        let mut mode = MovementMode::TransitWaypoints {
+            waypoints: vec![wp],
+            idx: 0,
+            station,
+        };
+        let d0 = earth::geodesic_distance_m(lat_deg, lon_deg, wp.0, wp.1);
+        for _ in 0..200 {
+            integrate_entity(
+                &mut lat_deg,
+                &mut lon_deg,
+                &mut heading_deg,
+                480.0,
+                &mut mode,
+                0.25,
+            );
+        }
+        let d1 = earth::geodesic_distance_m(lat_deg, lon_deg, wp.0, wp.1);
+        assert!(
+            d1 < d0 * 0.95,
+            "should close distance to waypoint: {} -> {}",
+            d0,
+            d1
+        );
+    }
+
+    #[test]
+    fn orbit_mode_advances_lat_lon_over_many_steps() {
+        let mut lat_deg = 35.4;
+        let mut lon_deg = -40.1;
+        let mut heading_deg = 275.0;
+        let max_speed_knots = 480.0;
+        let mut mode = MovementMode::Orbit {
+            center_lat_deg: 35.5,
+            center_lon_deg: -40.0,
+            radius_m: 5_000.0,
+            clockwise: true,
+        };
+        let dt = 0.0625_f64;
+        for _ in 0..500 {
+            integrate_entity(
+                &mut lat_deg,
+                &mut lon_deg,
+                &mut heading_deg,
+                max_speed_knots,
+                &mut mode,
+                dt,
+            );
+        }
+        let moved = (lat_deg - 35.4).abs() > 1e-5 || (lon_deg - (-40.1)).abs() > 1e-5;
+        assert!(
+            moved,
+            "expected orbit integration to change position; lat={lat_deg} lon={lon_deg}"
+        );
     }
 }

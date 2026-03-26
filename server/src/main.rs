@@ -236,17 +236,6 @@ fn on_session_closed_stub(_public: &SessionPublic) {
     // Intentionally left empty for now.
 }
 
-fn space_tick_interval_from_env() -> u64 {
-    let raw = env::var(space::ENV_SPACE_TICK_INTERVAL).ok();
-    let mut v = space::DEFAULT_SPACE_TICK_INTERVAL;
-    if let Some(ref s) = raw {
-        if let Ok(n) = s.trim().parse::<u64>() {
-            v = n.max(1);
-        }
-    }
-    v
-}
-
 fn collect_satellite_rows(world: &[EntityState]) -> Vec<(String, f64, f64, f64)> {
     world
         .iter()
@@ -314,6 +303,10 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
             } else {
                 None
             };
+            let movement_kind = s
+                .movement
+                .as_ref()
+                .map(|_| movement::movement_kind_wire(&s.movement_mode).to_string());
             EntitySnapshotDto {
                 id: s.id.clone(),
                 name: s.name.clone(),
@@ -328,6 +321,7 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 station_eta_sim_s,
                 station_progress,
                 display_path_deg,
+                movement_kind,
                 space: s.space_overlay.clone(),
             }
         })
@@ -818,7 +812,6 @@ fn spawn_game_loop(
     timing: Arc<Mutex<SimTimingState>>,
     io: SocketIo,
     wall_tick: Duration,
-    space_tick_interval: u64,
     mut objectives_blue: Vec<ObjectiveTracker>,
     mut objectives_red: Vec<ObjectiveTracker>,
     scenario_summary_dto: ScenarioSummaryDto,
@@ -870,18 +863,12 @@ fn spawn_game_loop(
                             remaining -= step;
                         }
 
+                        propagate_space_entities(&mut guard, end_time);
+                        let sats = collect_satellite_rows(&guard);
+                        let ground = collect_ground_rows(&guard);
                         if tick_count == 1 {
-                            propagate_space_entities(&mut guard, end_time);
-                            let sats = collect_satellite_rows(&guard);
-                            let ground = collect_ground_rows(&guard);
                             coverage_prev = space::current_coverage_pairs(&sats, &ground);
-                        } else if tick_count > 1
-                            && space_tick_interval > 0
-                            && tick_count % space_tick_interval == 0
-                        {
-                            propagate_space_entities(&mut guard, end_time);
-                            let sats = collect_satellite_rows(&guard);
-                            let ground = collect_ground_rows(&guard);
+                        } else {
                             let sim_str =
                                 end_time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                             space_events = space::diff_coverage_events(
@@ -1056,8 +1043,6 @@ fn on_connect(
             let wall_dt_s = sim_wall_create.dt_s;
             let wall_tick = Duration::from_secs_f64(wall_dt_s);
             let timing = Arc::new(Mutex::new(SimTimingState::new_now(wall_dt_s)));
-            let space_tick_interval = space_tick_interval_from_env();
-            
             let mut obs_b = Vec::new();
             let mut obs_r = Vec::new();
             if let Some(ref objs) = scenario.config.objectives {
@@ -1073,7 +1058,6 @@ fn on_connect(
                 timing.clone(),
                 io.clone(),
                 wall_tick,
-                space_tick_interval,
                 obs_b,
                 obs_r,
                 summary_dto,
@@ -1228,9 +1212,21 @@ fn on_connect(
                 let socket_key = socket.id.to_string();
                 let session_id = data.session_id.clone();
                 let entity_id = data.entity_id.clone();
+                info!(
+                    "issue_movement_order recv session_id={} entity_id={} waypoints={} order={:?}",
+                    session_id,
+                    entity_id,
+                    data.waypoints.len(),
+                    data.order
+                );
 
                 let store_lock = store.lock().await;
                 let Some(session) = store_lock.get(&session_id) else {
+                    warn!(
+                        "movement_order rejected: session not found session_id={} socket_id={}",
+                        session_id,
+                        socket.id
+                    );
                     socket
                         .emit(
                             "movement_order_rejected",
@@ -1243,6 +1239,11 @@ fn on_connect(
                 };
 
                 let Some(team) = session.player_teams.get(&socket_key).copied() else {
+                    warn!(
+                        "movement_order rejected: not joined session session_id={} socket_id={}",
+                        session_id,
+                        socket.id
+                    );
                     socket
                         .emit(
                             "movement_order_rejected",
@@ -1261,6 +1262,10 @@ fn on_connect(
                     .collect();
 
                 if let Err(msg) = validate_waypoint_path(&waypoints) {
+                    warn!(
+                        "movement_order rejected: invalid waypoint path session_id={} entity_id={} msg={}",
+                        session_id, entity_id, msg
+                    );
                     socket
                         .emit("movement_order_rejected", ErrorDto { message: msg })
                         .ok();
@@ -1270,6 +1275,10 @@ fn on_connect(
                 let station = match station_phase_from_order(&data.order) {
                     Ok(s) => s,
                     Err(msg) => {
+                        warn!(
+                            "movement_order rejected: bad order session_id={} entity_id={} msg={}",
+                            session_id, entity_id, msg
+                        );
                         socket
                             .emit("movement_order_rejected", ErrorDto { message: msg })
                             .ok();
@@ -1279,6 +1288,10 @@ fn on_connect(
 
                 let mut guard = session.world.lock().await;
                 let Some(entity) = guard.iter_mut().find(|s| s.id == entity_id) else {
+                    warn!(
+                        "movement_order rejected: unknown unit id session_id={} entity_id={}",
+                        session_id, entity_id
+                    );
                     socket
                         .emit(
                             "movement_order_rejected",
@@ -1291,6 +1304,10 @@ fn on_connect(
                 };
 
                 if entity.movement.is_none() {
+                    warn!(
+                        "movement_order rejected: unit cannot receive orders session_id={} entity_id={}",
+                        session_id, entity_id
+                    );
                     socket
                         .emit(
                             "movement_order_rejected",
@@ -1303,6 +1320,13 @@ fn on_connect(
                 }
 
                 if !player_may_command_unit(team, &entity.allegiance) {
+                    warn!(
+                        "movement_order rejected: not allowed session_id={} entity_id={} team={:?} allegiance={:?}",
+                        session_id,
+                        entity_id,
+                        team,
+                        entity.allegiance
+                    );
                     socket
                         .emit(
                             "movement_order_rejected",
@@ -1326,6 +1350,10 @@ fn on_connect(
                     &waypoints,
                     &station,
                 ) {
+                    warn!(
+                        "movement_order rejected: land constraint session_id={} entity_id={} msg={}",
+                        session_id, entity_id, msg
+                    );
                     socket
                         .emit("movement_order_rejected", ErrorDto { message: msg })
                         .ok();
@@ -1341,6 +1369,13 @@ fn on_connect(
                     station,
                     slat,
                     slon,
+                );
+                info!(
+                    "movement_order applied session_id={} entity_id={} total_path_m={:?} mode={:?}",
+                    session_id,
+                    entity_id,
+                    entity.movement_path_total_m,
+                    entity.movement_mode
                 );
             },
         );

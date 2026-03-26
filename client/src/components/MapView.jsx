@@ -1,7 +1,11 @@
 import * as Cesium from 'cesium';
 import ms from 'milsymbol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { heightMetersFromZoom, svgToImageDataUrl, worldShadeWithHoleCartesian3, zoomFromHeightMeters } from '../map/mapViewCesiumHelpers';
+import {
+  heightMetersFromZoom,
+  svgToImageDataUrl,
+  zoomFromHeightMeters,
+} from '../map/mapViewCesiumHelpers';
 import { readMapViewMemory, writeMapViewMemory } from '../map/mapViewMemory';
 import { mapClickDebug } from '../utils/mapClickDebug';
 import { haeFeetToMeters } from '../units/length';
@@ -9,10 +13,17 @@ import MovementPlanningCesium from './MovementPlanningCesium';
 
 /** Camera height (m) when focusing a selected unit (was zoom 7 in Leaflet). */
 const SELECTED_ENTITY_FOCUS_HEIGHT_M = heightMetersFromZoom(7);
+/** Roster double-click: farther out than initial selection focus (Leaflet zoom ~5). */
+const ROSTER_DBLCLICK_FOCUS_HEIGHT_M = heightMetersFromZoom(5);
+/** Seconds for roster double-click camera move (flyTo), not an instant jump. */
+const ROSTER_FOCUS_FLY_DURATION_S = 1.75;
 const DEFAULT_VIEW_HEIGHT_M = heightMetersFromZoom(4);
 
 /** NASA Blue Marble (Visible Earth) — bundled at `public/blue-marble-world.jpg`. */
 const BLUE_MARBLE_WORLD_IMAGE_URL = `${import.meta.env.BASE_URL}blue-marble-world.jpg`;
+/** Pixel size of that JPEG (equirectangular); required by Cesium SingleTileImageryProvider. */
+const BLUE_MARBLE_TILE_WIDTH = 5400;
+const BLUE_MARBLE_TILE_HEIGHT = 2700;
 
 /** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
 const MILSYMBOL_STANDARD = 'APP6';
@@ -22,6 +33,19 @@ if (typeof ms.setStandard === 'function') {
 }
 
 const normalizeSidc = (sidc) => sidc?.replace(/-/g, '');
+
+/**
+ * milsymbol SVGs are often non-square (`style.square` defaults false). Cesium billboards
+ * stretch the texture to `width`×`height`; matching those to the symbol's aspect ratio
+ * keeps APP-6 icons from looking vertically squashed on the globe.
+ */
+function billboardPixelSizeFromMilsymbol(symbol, maxEdgePx) {
+  const { width: w, height: h } = symbol.getSize();
+  const iw = Math.max(Number(w) || 1, 1);
+  const ih = Math.max(Number(h) || 1, 1);
+  const scale = maxEdgePx / Math.max(iw, ih);
+  return { width: iw * scale, height: ih * scale };
+}
 
 const createMilSymbolSvg = ({ sidc, size }) => {
   const normalizedSidc = normalizeSidc(sidc);
@@ -249,6 +273,8 @@ const MapView = ({
         new Cesium.SingleTileImageryProvider({
           url: BLUE_MARBLE_WORLD_IMAGE_URL,
           rectangle: Cesium.Rectangle.fromDegrees(-180.0, -90.0, 180.0, 90.0),
+          tileWidth: BLUE_MARBLE_TILE_WIDTH,
+          tileHeight: BLUE_MARBLE_TILE_HEIGHT,
           credit: 'NASA Visible Earth — Blue Marble',
         }),
       );
@@ -397,37 +423,30 @@ const MapView = ({
     [visibleEntities, selectedEntityId],
   );
 
-  const serverActivePathPositions = useMemo(() => {
-    const dp = selectedEntity?.display_path_deg;
-    if (!Array.isArray(dp) || dp.length < 2) return null;
-    return dp.map((p) => [p.lat_deg, p.lon_deg]);
-  }, [selectedEntity?.display_path_deg]);
-
-  const satelliteSelectionOverlays = useMemo(() => {
-    const sp = selectedEntity?.space;
-    if (!sp || typeof sp.footprint_radius_m !== 'number') return null;
-    const lat = selectedEntity.lat_deg;
-    const lon = selectedEntity.lon_deg;
-    const footprintRadiusM = Math.min(
-      Math.max(sp.footprint_radius_m, 15_000),
-      5_000_000,
-    );
-    const { outerPositions, innerPositions } = worldShadeWithHoleCartesian3(lat, lon, footprintRadiusM);
-    const groundTrack = Array.isArray(sp.ground_track_deg)
-      ? sp.ground_track_deg.map((p) => [p.lat_deg, p.lon_deg])
-      : [];
-    const future = Array.isArray(sp.future_footprint_deg)
-      ? sp.future_footprint_deg.map((p) => [p.lat_deg, p.lon_deg])
-      : [];
-    return {
-      outerPositions,
-      innerPositions,
-      center: [lat, lon],
-      footprintRadiusM,
-      groundTrack,
-      future,
-    };
-  }, [selectedEntity]);
+  const focusCameraOnEntity = useCallback(
+    (entity) => {
+      if (!viewer) return;
+      const haeM = haeFeetToMeters(entity.hae_ft);
+      const heightM = Math.max(ROSTER_DBLCLICK_FOCUS_HEIGHT_M, haeM * 1.2);
+      const destination = Cesium.Cartesian3.fromDegrees(
+        entity.lon_deg,
+        entity.lat_deg,
+        heightM,
+      );
+      try {
+        viewer.camera.flyTo({
+          destination,
+          duration: ROSTER_FOCUS_FLY_DURATION_S,
+          complete: () => {
+            viewer.scene.requestRender?.();
+          },
+        });
+      } catch {
+        /* viewer torn down */
+      }
+    },
+    [viewer],
+  );
 
   useEffect(() => {
     if (!viewer) return;
@@ -449,16 +468,24 @@ const MapView = ({
   useEffect(() => {
     if (!viewer) return;
 
+    const keepIds = new Set();
+    for (const entity of entities) {
+      if (!entity.hide_map_marker) keepIds.add(`unit-${entity.id}`);
+    }
+
     const toRemove = [];
     viewer.entities.values.forEach((e) => {
       const id = e.id != null ? String(e.id) : '';
-      if (id.startsWith('unit-') || id.startsWith('overlay-')) toRemove.push(e);
+      if (id.startsWith('unit-') && !keepIds.has(id)) {
+        toRemove.push(e);
+      }
     });
     toRemove.forEach((e) => viewer.entities.remove(e));
 
     for (const entity of entities) {
       if (entity.hide_map_marker) continue;
       const selected = isGlobeUnitSelected(entity, selectedEntityId);
+      const uid = `unit-${entity.id}`;
 
       let image;
       let width = 32;
@@ -474,108 +501,113 @@ const MapView = ({
           outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
         });
         image = svgToImageDataUrl(symbol.asSVG());
+        const maxEdge = selected ? 42 : 34;
+        const wh = billboardPixelSizeFromMilsymbol(symbol, maxEdge);
+        width = wh.width;
+        height = wh.height;
       } catch {
         image = svgToImageDataUrl(
           '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
         );
       }
-      width = selected ? 42 : 34;
-      height = selected ? 42 : 34;
 
       const haeM = haeFeetToMeters(entity.hae_ft);
-      viewer.entities.add({
-        id: `unit-${entity.id}`,
-        position: Cesium.Cartesian3.fromDegrees(entity.lon_deg, entity.lat_deg, haeM),
-        billboard: {
-          image,
-          width,
-          height,
-          scale: selected ? 1.12 : 1.0,
-          verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-      });
-    }
+      const position = Cesium.Cartesian3.fromDegrees(
+        entity.lon_deg,
+        entity.lat_deg,
+        haeM,
+      );
+      const billboardOpts = {
+        image,
+        width,
+        height,
+        scale: selected ? 1.12 : 1.0,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      };
 
-    if (serverActivePathPositions && selectedEntity) {
-      const pathHaeM = haeFeetToMeters(selectedEntity.hae_ft);
-      const flat = [];
-      for (const [lat, lon] of serverActivePathPositions) {
-        flat.push(lon, lat, pathHaeM);
-      }
-      viewer.entities.add({
-        id: 'overlay-activity-path',
-        polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-          width: 3,
-          material: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.92),
-        },
-      });
-    }
-
-    if (satelliteSelectionOverlays) {
-      const o = satelliteSelectionOverlays;
-      const hierarchy = new Cesium.PolygonHierarchy(o.outerPositions, [
-        new Cesium.PolygonHierarchy(o.innerPositions),
-      ]);
-      viewer.entities.add({
-        id: 'overlay-sat-shade',
-        polygon: {
-          hierarchy,
-          material: Cesium.Color.fromCssColorString('#020617').withAlpha(0.58),
-          perPositionHeight: false,
-          height: 0,
-        },
-      });
-      viewer.entities.add({
-        id: 'overlay-sat-footprint',
-        position: Cesium.Cartesian3.fromDegrees(o.center[1], o.center[0], 0),
-        ellipse: {
-          semiMajorAxis: o.footprintRadiusM,
-          semiMinorAxis: o.footprintRadiusM,
-          material: Cesium.Color.fromCssColorString('#86efac').withAlpha(0.14),
-          outline: true,
-          outlineColor: Cesium.Color.fromCssColorString('#86efac'),
-          outlineWidth: 2,
-          height: 0,
-        },
-      });
-      if (o.groundTrack.length > 1) {
-        const gf = [];
-        for (const [lat, lon] of o.groundTrack) gf.push(lon, lat);
+      const existing = viewer.entities.getById(uid);
+      if (Cesium.defined(existing)) {
+        existing.position = new Cesium.ConstantPositionProperty(position);
+        if (existing.billboard) {
+          existing.billboard.image = new Cesium.ConstantProperty(image);
+          existing.billboard.width = new Cesium.ConstantProperty(width);
+          existing.billboard.height = new Cesium.ConstantProperty(height);
+          existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.12 : 1.0);
+        }
+      } else {
         viewer.entities.add({
-          id: 'overlay-sat-track',
-          polyline: {
-            positions: Cesium.Cartesian3.fromDegreesArray(gf),
-            width: 2,
-            material: Cesium.Color.CYAN.withAlpha(0.9),
-            clampToGround: true,
-          },
-        });
-      }
-      if (o.future.length > 1) {
-        const ff = [];
-        for (const [lat, lon] of o.future) ff.push(lon, lat);
-        viewer.entities.add({
-          id: 'overlay-sat-future',
-          polyline: {
-            positions: Cesium.Cartesian3.fromDegreesArray(ff),
-            width: 2,
-            material: Cesium.Color.fromCssColorString('#fbbf24').withAlpha(0.4),
-            clampToGround: true,
-          },
+          id: uid,
+          position,
+          billboard: billboardOpts,
         });
       }
     }
-  }, [
-    viewer,
-    entities,
-    selectedEntityId,
-    selectedEntity,
-    serverActivePathPositions,
-    satelliteSelectionOverlays,
-  ]);
+
+    try {
+      viewer.scene.requestRender?.();
+    } catch {
+      /* viewer may be tearing down */
+    }
+  }, [viewer, entities, selectedEntityId]);
+
+  /** Authoritative planned path from the server (`display_path_deg`); cyan polyline. */
+  useEffect(() => {
+    if (!viewer) return;
+
+    const stripPrev = () => {
+      const toRemove = [];
+      viewer.entities.values.forEach((e) => {
+        const id = e.id != null ? String(e.id) : '';
+        if (id.startsWith('overlay-auth-path-')) toRemove.push(e);
+      });
+      toRemove.forEach((e) => viewer.entities.remove(e));
+    };
+
+    stripPrev();
+
+    if (!selectedEntityId) {
+      try {
+        viewer.scene.requestRender?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const row = entities.find((e) => e.id === selectedEntityId);
+    const path = row?.display_path_deg;
+    if (!row || !path || path.length < 2) {
+      try {
+        viewer.scene.requestRender?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const haeM = haeFeetToMeters(row.hae_ft);
+    const h = Number.isFinite(haeM) ? haeM : 0;
+    const flat = [];
+    for (const p of path) {
+      flat.push(p.lon_deg, p.lat_deg, h);
+    }
+
+    viewer.entities.add({
+      id: `overlay-auth-path-${selectedEntityId}`,
+      polyline: {
+        positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
+        width: 4,
+        material: Cesium.Color.CYAN.withAlpha(0.88),
+      },
+    });
+
+    try {
+      viewer.scene.requestRender?.();
+    } catch {
+      /* ignore */
+    }
+  }, [viewer, entities, selectedEntityId]);
 
   const unitCardHeight = outerSize.height ? outerSize.height * 0.1 : 30;
   const unitCardWidth = unitCardHeight / 2;
@@ -678,9 +710,9 @@ const MapView = ({
         <div style={{ marginTop: 6, opacity: 0.9, lineHeight: 1.4 }}>
           <strong>Movement plan</strong>: select a movable unit → <strong>right-click</strong> waypoints →{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>O</kbd>
-          + drag orbit or{' '}
+          + right-click/drag orbit or{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>R</kbd>
-          + A → B → drag radius.{' '}
+          + right-click A → right-click B → right-click/drag radius.{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd> clears
           plan / preview first; another <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd>{' '}
           deselects.
@@ -703,6 +735,11 @@ const MapView = ({
             Selected: <strong>{selectedEntity.name}</strong> ({selectedEntity.id})
             {!selectedEntity.movable && (
               <span style={{ color: '#f87171' }}> — not movable</span>
+            )}
+            {selectedEntity.movable && selectedEntity.movement_kind && (
+              <div style={{ marginTop: 4, opacity: 0.88, fontSize: 11 }}>
+                Sim movement: <strong>{selectedEntity.movement_kind}</strong>
+              </div>
             )}
           </div>
         )}
@@ -734,6 +771,12 @@ const MapView = ({
               onClick={() => {
                 mapClickDebug('roster:red:click', entity.id);
                 setSelectedEntityId(entity.id);
+              }}
+              onDoubleClick={(e) => {
+                e.preventDefault();
+                mapClickDebug('roster:red:dblclick', entity.id);
+                setSelectedEntityId(entity.id);
+                focusCameraOnEntity(entity);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -844,6 +887,12 @@ const MapView = ({
                 onClick={() => {
                   mapClickDebug('roster:blue:click', entity.id);
                   setSelectedEntityId(entity.id);
+                }}
+                onDoubleClick={(e) => {
+                  e.preventDefault();
+                  mapClickDebug('roster:blue:dblclick', entity.id);
+                  setSelectedEntityId(entity.id);
+                  focusCameraOnEntity(entity);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
