@@ -32,6 +32,8 @@ export const EntityDtoSchema = z.object({
   hae_ft: z.number(),
   heading_deg: z.number(),
   sidc: z.string(),
+  /** When set, MapView uses this GLB URL (under `public/`) instead of milsymbol for the globe marker. */
+  map_icon_glb_url: z.string().optional().nullable(),
   movable: z.boolean().optional(),
   hide_map_marker: z.boolean().optional(),
   space: SpaceSnapshotSchema.optional().nullable(),

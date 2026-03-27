@@ -62,6 +62,10 @@ pub struct EntitySnapshotDto {
     pub hae_ft: f64,
     pub heading_deg: f64,
     pub sidc: String,
+    /// When set, the map loads this glTF/GLB (path relative to the client app root) instead of milsymbol.
+    /// Omitted unless the entity template has `map_icon_glb_override: true` and a URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_icon_glb_url: Option<String>,
     /// False if the entity has no `movement` component (cannot receive movement orders).
     pub movable: bool,
     /// When true, map does not draw a position marker (e.g. space assets).

@@ -34,6 +34,14 @@ if (typeof ms.setStandard === 'function') {
 
 const normalizeSidc = (sidc) => sidc?.replace(/-/g, '');
 
+/** Resolves a path under `client/public/` for Cesium (respects Vite `base`). */
+function publicAssetUrl(relativePath) {
+  const base = import.meta.env.BASE_URL ?? '/';
+  const p = String(relativePath).replace(/^\/+/, '');
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  return `${prefix}${p}`;
+}
+
 /**
  * milsymbol SVGs are often non-square (`style.square` defaults false). Cesium billboards
  * stretch the texture to `width`×`height`; matching those to the symbol's aspect ratio
@@ -487,60 +495,113 @@ const MapView = ({
       const selected = isGlobeUnitSelected(entity, selectedEntityId);
       const uid = `unit-${entity.id}`;
 
-      let image;
-      let width = 32;
-      let height = 32;
-
-      try {
-        const normalizedSidc = normalizeSidc(entity.sidc);
-        const symbol = new ms.Symbol(normalizedSidc, {
-          size: selected ? 36 : 28,
-          standard: MILSYMBOL_STANDARD,
-          direction: Number(entity.heading_deg ?? 0),
-          outlineWidth: selected ? 6 : 0,
-          outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
-        });
-        image = svgToImageDataUrl(symbol.asSVG());
-        const maxEdge = selected ? 42 : 34;
-        const wh = billboardPixelSizeFromMilsymbol(symbol, maxEdge);
-        width = wh.width;
-        height = wh.height;
-      } catch {
-        image = svgToImageDataUrl(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
-        );
-      }
-
       const haeM = haeFeetToMeters(entity.hae_ft);
       const position = Cesium.Cartesian3.fromDegrees(
         entity.lon_deg,
         entity.lat_deg,
         haeM,
       );
-      const billboardOpts = {
-        image,
-        width,
-        height,
-        scale: selected ? 1.12 : 1.0,
-        verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-      };
+      const headingRad = Cesium.Math.toRadians(Number(entity.heading_deg ?? 0));
+      const orientation = Cesium.Transforms.headingPitchRollQuaternion(
+        position,
+        new Cesium.HeadingPitchRoll(headingRad, 0, 0),
+      );
 
+      const glbPath = entity.map_icon_glb_url;
       const existing = viewer.entities.getById(uid);
-      if (Cesium.defined(existing)) {
-        existing.position = new Cesium.ConstantPositionProperty(position);
-        if (existing.billboard) {
-          existing.billboard.image = new Cesium.ConstantProperty(image);
-          existing.billboard.width = new Cesium.ConstantProperty(width);
-          existing.billboard.height = new Cesium.ConstantProperty(height);
-          existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.12 : 1.0);
+
+      if (glbPath) {
+        const uri = publicAssetUrl(glbPath);
+        const minPx = selected ? 128 : 88;
+        if (Cesium.defined(existing)) {
+          existing.position = new Cesium.ConstantPositionProperty(position);
+          existing.orientation = new Cesium.ConstantProperty(orientation);
+          if (existing.billboard) {
+            existing.billboard = undefined;
+          }
+          if (!existing.model) {
+            existing.model = new Cesium.ModelGraphics({
+              uri,
+              minimumPixelSize: minPx,
+              maximumScale: 50000,
+              runAnimations: false,
+              silhouetteColor: Cesium.Color.fromCssColorString('#fbbf24'),
+              silhouetteSize: selected ? 2.5 : 0,
+            });
+          } else {
+            existing.model.uri = new Cesium.ConstantProperty(uri);
+            existing.model.minimumPixelSize = new Cesium.ConstantProperty(minPx);
+            existing.model.silhouetteSize = new Cesium.ConstantProperty(selected ? 2.5 : 0);
+          }
+        } else {
+          viewer.entities.add({
+            id: uid,
+            position,
+            orientation,
+            model: {
+              uri,
+              minimumPixelSize: minPx,
+              maximumScale: 50000,
+              runAnimations: false,
+              silhouetteColor: Cesium.Color.fromCssColorString('#fbbf24'),
+              silhouetteSize: selected ? 2.5 : 0,
+            },
+          });
         }
       } else {
-        viewer.entities.add({
-          id: uid,
-          position,
-          billboard: billboardOpts,
-        });
+        let image;
+        let width = 32;
+        let height = 32;
+
+        try {
+          const normalizedSidc = normalizeSidc(entity.sidc);
+          const symbol = new ms.Symbol(normalizedSidc, {
+            size: selected ? 36 : 28,
+            standard: MILSYMBOL_STANDARD,
+            direction: Number(entity.heading_deg ?? 0),
+            outlineWidth: selected ? 6 : 0,
+            outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
+          });
+          image = svgToImageDataUrl(symbol.asSVG());
+          const maxEdge = selected ? 42 : 34;
+          const wh = billboardPixelSizeFromMilsymbol(symbol, maxEdge);
+          width = wh.width;
+          height = wh.height;
+        } catch {
+          image = svgToImageDataUrl(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
+          );
+        }
+
+        const billboardOpts = {
+          image,
+          width,
+          height,
+          scale: selected ? 1.12 : 1.0,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+        };
+
+        if (Cesium.defined(existing)) {
+          existing.position = new Cesium.ConstantPositionProperty(position);
+          if (existing.model) {
+            existing.model = undefined;
+          }
+          if (existing.billboard) {
+            existing.billboard.image = new Cesium.ConstantProperty(image);
+            existing.billboard.width = new Cesium.ConstantProperty(width);
+            existing.billboard.height = new Cesium.ConstantProperty(height);
+            existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.12 : 1.0);
+          } else {
+            existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
+          }
+        } else {
+          viewer.entities.add({
+            id: uid,
+            position,
+            billboard: billboardOpts,
+          });
+        }
       }
     }
 

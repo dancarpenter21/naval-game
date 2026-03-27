@@ -16,3 +16,6 @@
           entity: code_110000
           modifier_one: code_00
           modifier_two: code_00
+        # When true, Cesium loads the GLB instead of milsymbol (file: client/public/…). Default false.
+        map_icon_glb_override: false
+        map_icon_glb_url: models/low_poly_pentagon.glb

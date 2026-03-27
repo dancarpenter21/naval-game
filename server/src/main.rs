@@ -136,12 +136,20 @@ fn validate_hardpoints_against_world(
 #[derive(Debug, Clone)]
 struct SymbolConfig {
     sidc: String,
+    /// When true, map uses `map_icon_glb_url` instead of milsymbol; when false, URL is ignored.
+    map_icon_glb_override: bool,
+    /// Client map: load this glTF/GLB URL instead of a milsymbol billboard (path under `client/public/`).
+    map_icon_glb_url: Option<String>,
 }
 
 /// YAML shape: `{ sidc_template: { ... } }` (not an externally tagged enum key like `Template:`).
 #[derive(Debug, Deserialize)]
 struct SymbolConfigWire {
     sidc_template: SidcTemplate,
+    #[serde(default)]
+    map_icon_glb_override: bool,
+    #[serde(default)]
+    map_icon_glb_url: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for SymbolConfig {
@@ -161,7 +169,22 @@ impl<'de> Deserialize<'de> for SymbolConfig {
             ));
         }
 
-        Ok(SymbolConfig { sidc })
+        let map_icon_glb_url = wire
+            .map_icon_glb_url
+            .and_then(|s| {
+                let t = s.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                }
+            });
+
+        Ok(SymbolConfig {
+            sidc,
+            map_icon_glb_override: wire.map_icon_glb_override,
+            map_icon_glb_url,
+        })
     }
 }
 
@@ -400,6 +423,11 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 hae_ft: s.transform.hae_ft,
                 heading_deg: s.transform.heading_deg,
                 sidc: s.symbol.sidc.clone(),
+                map_icon_glb_url: if s.symbol.map_icon_glb_override {
+                    s.symbol.map_icon_glb_url.clone()
+                } else {
+                    None
+                },
                 movable: s.movement.is_some(),
                 hide_map_marker: s.hide_map_marker,
                 station_eta_sim_s,
