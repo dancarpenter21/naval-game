@@ -10,8 +10,10 @@ export const SpaceSnapshotSchema = z.object({
   line2: z.string(),
   fov_half_angle_deg: z.number(),
   footprint_radius_m: z.number(),
+  visibility_cap_radius_m: z.number(),
   ground_track_deg: z.array(LatLonDegSchema),
   future_footprint_deg: z.array(LatLonDegSchema),
+  field_of_regard_polygon_deg: z.array(LatLonDegSchema).optional().default([]),
 });
 
 export const EntityDtoSchema = z.object({
@@ -20,7 +22,8 @@ export const EntityDtoSchema = z.object({
   allegiance: z.enum(['hostile', 'friendly']),
   lat_deg: z.number(),
   lon_deg: z.number(),
-  hae_m: z.number(),
+  /** WGS84 height above ellipsoid (international feet). */
+  hae_ft: z.number(),
   heading_deg: z.number(),
   sidc: z.string(),
   movable: z.boolean().optional(),
@@ -29,6 +32,8 @@ export const EntityDtoSchema = z.object({
   station_eta_sim_s: z.number().optional().nullable(),
   station_progress: z.number().optional().nullable(),
   display_path_deg: z.array(LatLonDegSchema).optional().nullable(),
+  /** Server: cruise | transit_waypoints | orbit | racetrack */
+  movement_kind: z.string().optional().nullable(),
 });
 
 export const SpaceCoverageEventSchema = z.object({

@@ -6,8 +6,8 @@ use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use sgp4::{Constants, Elements};
 
 use crate::dto::{LatLonDegDto, SpaceCoverageEventDto, SpaceSnapshotDto};
+use crate::earth::{geodesic_azimuth_deg_1_to_2, geodesic_direct_deg, geodesic_distance_m};
 use std::collections::HashSet;
-use crate::earth::geodesic_distance_m;
 
 /// WGS84 equatorial radius (km), matching `satellite.js` `eciToGeodetic`.
 const WGS84_A_KM: f64 = 6378.137;
@@ -18,11 +18,8 @@ const TWO_PI: f64 = std::f64::consts::TAU;
 pub const DEFAULT_TRACK_AHEAD_S: f64 = 1800.0;
 pub const DEFAULT_TRACK_SAMPLES: usize = 64;
 
-/// Default wall-tick interval between space propagation + coverage checks (see `ENV_SPACE_TICK_INTERVAL`).
-pub const DEFAULT_SPACE_TICK_INTERVAL: u64 = 16;
-
-/// Environment variable: run space propagation every N wall ticks (default [`DEFAULT_SPACE_TICK_INTERVAL`]).
-pub const ENV_SPACE_TICK_INTERVAL: &str = "SPACE_TICK_INTERVAL";
+/// Space propagation and FoV coverage run on the same wall-clock cadence as the main game loop
+/// (`spawn_game_loop` in `main.rs`), not on a separate throttled interval.
 
 #[derive(Debug, Clone)]
 pub struct SpaceOrbitConfig {
@@ -137,6 +134,21 @@ pub fn footprint_radius_m(hae_m: f64, fov_half_angle_deg: f64) -> f64 {
     r * eta
 }
 
+/// Great-circle distance (m) from subsatellite point to where the satellite is at the horizon.
+/// Spherical Earth: `Re * arccos(Re / (Re + h))` with `h` = HAE (m). This is the radius of the cap of
+/// Earth surface points that have line-of-sight to the satellite (elevation ≥ 0° at limb).
+pub fn ground_visibility_cap_radius_m(hae_m: f64) -> f64 {
+    let re = crate::earth::WGS84_A_M;
+    let h = hae_m.max(0.0);
+    let rs = re + h;
+    if !rs.is_finite() || rs <= re {
+        return 0.0;
+    }
+    let cos_gamma = (re / rs).clamp(-1.0, 1.0);
+    let gamma = cos_gamma.acos();
+    re * gamma
+}
+
 pub fn propagate_lat_lon_hae(
     runtime: &SpaceOrbitRuntime,
     t: DateTime<Utc>,
@@ -159,13 +171,13 @@ pub fn propagate_lat_lon_hae(
     Ok((lat_rad.to_degrees(), lon_rad.to_degrees(), h_km * 1000.0))
 }
 
-/// Sample subsatellite track and footprint centers ahead in simulated time.
-pub fn sample_ground_track_deg(
+/// Sample subsatellite track ahead in simulated time with HAE (m) per point (for footprint radius).
+pub fn sample_ground_track_lat_lon_hae(
     runtime: &SpaceOrbitRuntime,
     t0: DateTime<Utc>,
     ahead_s: f64,
     samples: usize,
-) -> Vec<(f64, f64)> {
+) -> Vec<(f64, f64, f64)> {
     if samples < 2 || ahead_s <= 0.0 {
         return Vec::new();
     }
@@ -173,11 +185,84 @@ pub fn sample_ground_track_deg(
     let mut out = Vec::with_capacity(samples);
     for i in 0..samples {
         let t = t0 + chrono::Duration::milliseconds((step * i as f64 * 1000.0).round() as i64);
-        if let Ok((lat, lon, _)) = propagate_lat_lon_hae(runtime, t) {
-            out.push((lat, lon));
+        if let Ok((lat, lon, hae)) = propagate_lat_lon_hae(runtime, t) {
+            out.push((lat, lon, hae));
         }
     }
     out
+}
+
+/// Average navigation azimuth at a track vertex (degrees).
+fn average_azimuth_deg(a1: f64, a2: f64) -> f64 {
+    let r1 = a1.to_radians();
+    let r2 = a2.to_radians();
+    let x = r1.cos() + r2.cos();
+    let y = r1.sin() + r2.sin();
+    let m = x.hypot(y);
+    if m < 1e-12 {
+        return a1;
+    }
+    y.atan2(x).to_degrees()
+}
+
+/// Closed polygon on the ground: corridor of width ~2× footprint along the subsatellite track.
+/// Uses per-sample HAE for footprint radius; offsets perpendicular to local track direction (WGS84 geodesic).
+pub fn field_of_regard_swath_polygon_deg(
+    track_lat_lon_hae: &[(f64, f64, f64)],
+    fov_half_angle_deg: f64,
+) -> Vec<LatLonDegDto> {
+    let n = track_lat_lon_hae.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let mut left = Vec::with_capacity(n);
+    let mut right = Vec::with_capacity(n);
+    for i in 0..n {
+        let (lat, lon, hae) = track_lat_lon_hae[i];
+        let r = footprint_radius_m(hae, fov_half_angle_deg);
+        if !r.is_finite() || r <= 0.0 {
+            return Vec::new();
+        }
+        let azimuth = if i == 0 {
+            geodesic_azimuth_deg_1_to_2(lat, lon, track_lat_lon_hae[1].0, track_lat_lon_hae[1].1)
+        } else if i == n - 1 {
+            geodesic_azimuth_deg_1_to_2(
+                track_lat_lon_hae[n - 2].0,
+                track_lat_lon_hae[n - 2].1,
+                lat,
+                lon,
+            )
+        } else {
+            let a1 = geodesic_azimuth_deg_1_to_2(
+                track_lat_lon_hae[i - 1].0,
+                track_lat_lon_hae[i - 1].1,
+                lat,
+                lon,
+            );
+            let a2 = geodesic_azimuth_deg_1_to_2(
+                lat,
+                lon,
+                track_lat_lon_hae[i + 1].0,
+                track_lat_lon_hae[i + 1].1,
+            );
+            average_azimuth_deg(a1, a2)
+        };
+        let (llat, llon) = geodesic_direct_deg(lat, lon, azimuth - 90.0, r);
+        let (rlat, rlon) = geodesic_direct_deg(lat, lon, azimuth + 90.0, r);
+        left.push((llat, llon));
+        right.push((rlat, rlon));
+    }
+    let mut poly: Vec<LatLonDegDto> = left
+        .into_iter()
+        .map(|(lat_deg, lon_deg)| LatLonDegDto { lat_deg, lon_deg })
+        .collect();
+    for (lat_deg, lon_deg) in right.into_iter().rev() {
+        poly.push(LatLonDegDto { lat_deg, lon_deg });
+    }
+    if let Some(first) = poly.first().cloned() {
+        poly.push(first);
+    }
+    poly
 }
 
 /// Pairs `(satellite_id, asset_id)` for ground units currently inside a satellite footprint.
@@ -272,20 +357,27 @@ pub fn build_space_snapshot(
 ) -> Result<SpaceSnapshotDto, String> {
     let (_lat, _lon, hae) = propagate_lat_lon_hae(runtime, t)?;
     let fr = footprint_radius_m(hae, runtime.config.fov_half_angle_deg);
-    let ground_track_deg: Vec<LatLonDegDto> = sample_ground_track_deg(runtime, t, track_ahead_s, track_samples)
-        .into_iter()
-        .map(|(lat_deg, lon_deg)| LatLonDegDto { lat_deg, lon_deg })
+    let visibility_cap_radius_m = ground_visibility_cap_radius_m(hae);
+    let track_hae =
+        sample_ground_track_lat_lon_hae(runtime, t, track_ahead_s, track_samples);
+    let ground_track_deg: Vec<LatLonDegDto> = track_hae
+        .iter()
+        .map(|&(lat_deg, lon_deg, _)| LatLonDegDto { lat_deg, lon_deg })
         .collect();
     // "Soon visible" region: same subsat track, lighter overlay on client.
     let future_footprint_deg = ground_track_deg.clone();
+    let field_of_regard_polygon_deg =
+        field_of_regard_swath_polygon_deg(&track_hae, runtime.config.fov_half_angle_deg);
 
     Ok(SpaceSnapshotDto {
         line1: runtime.config.line1.clone(),
         line2: runtime.config.line2.clone(),
         fov_half_angle_deg: runtime.config.fov_half_angle_deg,
         footprint_radius_m: fr,
+        visibility_cap_radius_m,
         ground_track_deg,
         future_footprint_deg,
+        field_of_regard_polygon_deg,
     })
 }
 
@@ -312,6 +404,30 @@ mod tests {
         assert!(
             (200_000.0..900_000.0).contains(&h),
             "expected ISS-like HAE (m), got {h}"
+        );
+    }
+
+    #[test]
+    fn field_of_regard_polygon_is_closed_ring() {
+        let track = vec![
+            (0.0, 0.0, 400_000.0),
+            (0.5, 0.0, 400_000.0),
+            (1.0, 0.0, 400_000.0),
+        ];
+        let poly = field_of_regard_swath_polygon_deg(&track, 2.5);
+        assert!(poly.len() >= 4, "expected closed ring, got len {}", poly.len());
+        let first = poly.first().unwrap();
+        let last = poly.last().unwrap();
+        assert!((first.lat_deg - last.lat_deg).abs() < 1e-9);
+        assert!((first.lon_deg - last.lon_deg).abs() < 1e-9);
+    }
+
+    #[test]
+    fn visibility_cap_radius_leo_order_of_magnitude() {
+        let r = ground_visibility_cap_radius_m(420_000.0);
+        assert!(
+            (1_500_000.0..3_500_000.0).contains(&r),
+            "expected ~2e6 m for ~420 km LEO, got {r}"
         );
     }
 }

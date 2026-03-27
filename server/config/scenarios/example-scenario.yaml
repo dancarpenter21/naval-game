@@ -26,23 +26,24 @@ red_entities:
   - id: frigate
     lat_deg: 34.8
     lon_deg: -39.2
-    hae_m: 0.0
+    hae_ft: 0.0
     heading_deg: 95.0
 blue_entities:
+  # Air tracks: same WGS84 HAE (ft) for fixed-wing and missile (~10 km ≈ FL330).
   - id: blue-airplane
     lat_deg: 35.4
     lon_deg: -40.1
-    hae_m: 2500.0
+    hae_ft: 32808.4
     heading_deg: 275.0
   - id: blue-missile
     lat_deg: 35.2
     lon_deg: -40.4
-    hae_m: 1000.0
+    hae_ft: 32808.4
     heading_deg: 280.0
   - example-satellite
   - id: pentagon
     lat_deg: 38.8710
     lon_deg: -77.0559
-    hae_m: 0.0
+    hae_ft: 0.0
     heading_deg: 0.0
 spawns: []

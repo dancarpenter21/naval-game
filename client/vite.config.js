@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import cesium from 'vite-plugin-cesium'
 
 /* global process */
 
@@ -13,7 +14,7 @@ const autoOpen = process.env.VITE_APP_AUTO_OPEN === 'true';
 const disableHmr = process.env.VITE_DISABLE_HMR === 'true';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), cesium()],
   server: {
     // nginx proxies with Host: client; Docker health/E2E probes may use 127.0.0.1 or Host: nginx.
     allowedHosts: ['client', 'nginx', 'localhost', '127.0.0.1'],

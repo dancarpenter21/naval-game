@@ -7,17 +7,17 @@
         line1: "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992"
         line2: "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
         fov_half_angle_deg: 2.5
-        hide_map_marker: true
     - kind: symbol
       data:
+        # APP-6 Space (05): Satellite (110700); modifier 1 = LEO (ISS is low Earth orbit).
         sidc_template:
           version: "10"
           context: reality
           standard_identity: friend
-          symbol_set: air
+          symbol_set: space
           status: present
           hqtfd: not_applicable
           amplifier: unspecified
-          entity: code_110103
-          modifier_one: code_00
+          entity: code_110700
+          modifier_one: code_01
           modifier_two: code_00

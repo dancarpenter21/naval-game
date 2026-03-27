@@ -1,61 +1,29 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, Polygon, Pane, useMap } from 'react-leaflet';
-import L from 'leaflet';
+import * as Cesium from 'cesium';
 import ms from 'milsymbol';
-import 'leaflet/dist/leaflet.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import missileOutlinePngUrl from '../assets/missile-outline-transparent.png';
-import MovementPlanningLayer from './MovementPlanningLayer';
-import MapKeyboardPanLayer from './MapKeyboardPanLayer';
-import MapPointerDebugLayer from './MapPointerDebugLayer';
-import { mapClickDebug } from '../utils/mapClickDebug';
+import {
+  heightMetersFromZoom,
+  svgToImageDataUrl,
+  zoomFromHeightMeters,
+} from '../map/mapViewCesiumHelpers';
 import { readMapViewMemory, writeMapViewMemory } from '../map/mapViewMemory';
-import { geodesicDirect } from '../geo/wgs84Geodesic';
+import { mapClickDebug } from '../utils/mapClickDebug';
+import { haeFeetToMeters } from '../units/length';
+import MovementPlanningCesium from './MovementPlanningCesium';
 
-/** Zoom when re-opening the map with a unit already selected (no saved view). */
-const SELECTED_ENTITY_FOCUS_ZOOM = 7;
-const DEFAULT_MAP_ZOOM = 4;
+/** Camera height (m) when focusing a selected unit (was zoom 7 in Leaflet). */
+const SELECTED_ENTITY_FOCUS_HEIGHT_M = heightMetersFromZoom(7);
+/** Roster double-click: farther out than initial selection focus (Leaflet zoom ~5). */
+const ROSTER_DBLCLICK_FOCUS_HEIGHT_M = heightMetersFromZoom(5);
+/** Seconds for roster double-click camera move (flyTo), not an instant jump. */
+const ROSTER_FOCUS_FLY_DURATION_S = 1.75;
+const DEFAULT_VIEW_HEIGHT_M = heightMetersFromZoom(4);
 
-/** Persist center/zoom while the map exists (tab switches unmount MapView). */
-function MapViewMemoryWriter({ sessionId }) {
-  const map = useMap();
-  useEffect(() => {
-    if (!sessionId) return undefined;
-    const save = () => {
-      const c = map.getCenter();
-      writeMapViewMemory(sessionId, [c.lat, c.lng], map.getZoom());
-    };
-    map.on('moveend', save);
-    map.on('zoomend', save);
-    return () => {
-      map.off('moveend', save);
-      map.off('zoomend', save);
-    };
-  }, [map, sessionId]);
-  return null;
-}
-
-/**
- * If we booted on an empty entity list (e.g. tab remount before snapshot), snap to
- * selected unit or first visible entity once data exists — unless we restored from memory.
- */
-function MapViewDeferredGeoFocus({ fromMemory, selectedEntityId, visibleEntities }) {
-  const map = useMap();
-  const appliedRef = useRef(false);
-  useEffect(() => {
-    if (fromMemory || appliedRef.current) return;
-    if (!visibleEntities.length) return;
-    const sel =
-      selectedEntityId && visibleEntities.find((s) => s.id === selectedEntityId);
-    if (sel) {
-      map.setView([sel.lat_deg, sel.lon_deg], SELECTED_ENTITY_FOCUS_ZOOM, { animate: false });
-    } else {
-      const first = visibleEntities[0];
-      map.setView([first.lat_deg, first.lon_deg], DEFAULT_MAP_ZOOM, { animate: false });
-    }
-    appliedRef.current = true;
-  }, [map, fromMemory, selectedEntityId, visibleEntities]);
-  return null;
-}
+/** NASA Blue Marble (Visible Earth) — bundled at `public/blue-marble-world.jpg`. */
+const BLUE_MARBLE_WORLD_IMAGE_URL = `${import.meta.env.BASE_URL}blue-marble-world.jpg`;
+/** Pixel size of that JPEG (equirectangular); required by Cesium SingleTileImageryProvider. */
+const BLUE_MARBLE_TILE_WIDTH = 5400;
+const BLUE_MARBLE_TILE_HEIGHT = 2700;
 
 /** milsymbol: APP-6 drawing (matches server / picker milstd `app6d` data). */
 const MILSYMBOL_STANDARD = 'APP6';
@@ -66,6 +34,19 @@ if (typeof ms.setStandard === 'function') {
 
 const normalizeSidc = (sidc) => sidc?.replace(/-/g, '');
 
+/**
+ * milsymbol SVGs are often non-square (`style.square` defaults false). Cesium billboards
+ * stretch the texture to `width`×`height`; matching those to the symbol's aspect ratio
+ * keeps APP-6 icons from looking vertically squashed on the globe.
+ */
+function billboardPixelSizeFromMilsymbol(symbol, maxEdgePx) {
+  const { width: w, height: h } = symbol.getSize();
+  const iw = Math.max(Number(w) || 1, 1);
+  const ih = Math.max(Number(h) || 1, 1);
+  const scale = maxEdgePx / Math.max(iw, ih);
+  return { width: iw * scale, height: ih * scale };
+}
+
 const createMilSymbolSvg = ({ sidc, size }) => {
   const normalizedSidc = normalizeSidc(sidc);
   const symbol = new ms.Symbol(normalizedSidc, {
@@ -75,72 +56,9 @@ const createMilSymbolSvg = ({ sidc, size }) => {
   return symbol.asSVG();
 };
 
-const createMilSymbolIcon = ({ sidc, name, selected = false }) => {
-  try {
-    const normalizedSidc = normalizeSidc(sidc);
-    const symbol = new ms.Symbol(normalizedSidc, {
-      size: 25,
-      standard: MILSYMBOL_STANDARD,
-    });
-    const svg = symbol.asSVG();
-
-    const ring = selected
-      ? 'box-shadow: 0 0 0 3px #fbbf24, 0 0 14px rgba(251,191,36,0.9); border-radius: 6px; padding: 2px;'
-      : '';
-
-    return L.divIcon({
-      className: selected ? 'custom-milsymbol map-entity-selected' : 'custom-milsymbol',
-      html: `
-        <div style="
-          width: 25px;
-          height: 25px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          overflow: visible;
-          ${ring}
-        " title="${name}">
-          ${svg}
-        </div>
-      `,
-      iconSize: selected ? [31, 31] : [25, 25],
-      iconAnchor: selected ? [15, 15] : [12, 12],
-    });
-  } catch (error) {
-    console.warn('[milsymbol] failed to build icon, using fallback', {
-      sidc,
-      normalizedSidc: normalizeSidc(sidc),
-      error,
-    });
-    return L.divIcon({
-      className: 'custom-milsymbol fallback',
-      html: `
-        <div style="
-          width: 32px;
-          height: 32px;
-          border-radius: 50%;
-          border: 2px solid #fff;
-          background: #0f4c81;
-          box-shadow: 0 0 0 2px rgba(0,0,0,0.35);
-        "></div>
-      `,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
-    });
-  }
-};
-
-const isMissileSidc = (sidc) => {
-  // Hyphenated SIDC segments: seg4 is symbol_set (we treat 02 as "missile").
-  // Example format: seg1-seg2-seg3-seg4-seg5-...
-  const parts = String(sidc ?? '').split('-');
-  return parts.length >= 4 && parts[3] === '02';
-};
-
-// Used by the alpha-mask SVG for the missile marker.
-// Keep in sync with `client/src/assets/missile-outline-transparent.png`.
-const MISSILE_OUTLINE_PNG_W = 1024;
-const MISSILE_OUTLINE_PNG_H = 1536;
+function isGlobeUnitSelected(entity, selectedEntityId) {
+  return selectedEntityId != null && String(entity.id) === String(selectedEntityId);
+}
 
 function isTypingInFormField() {
   const el = document.activeElement;
@@ -167,12 +85,17 @@ function visibleEntitiesFromEntitiesAndTeam(entities, playerTeam) {
         : entities;
 }
 
-/** One-shot per MapView mount; `entitiesAtMount` is usually [] (see deferred focus). */
 function computeInitialMapBootstrap(sessionId, selectedEntityIdAtMount, entitiesAtMount, playerTeam) {
   const visibleEntities = visibleEntitiesFromEntitiesAndTeam(entitiesAtMount, playerTeam);
   const mem = readMapViewMemory(sessionId);
   if (mem?.center && Number.isFinite(mem.zoom)) {
-    return { center: mem.center, zoom: mem.zoom, restoredFromMemory: true };
+    const h = mem.cameraHeightM ?? heightMetersFromZoom(mem.zoom);
+    return {
+      center: mem.center,
+      zoom: mem.zoom,
+      heightM: h,
+      restoredFromMemory: true,
+    };
   }
   const sel =
     selectedEntityIdAtMount &&
@@ -180,62 +103,26 @@ function computeInitialMapBootstrap(sessionId, selectedEntityIdAtMount, entities
   if (sel) {
     return {
       center: [sel.lat_deg, sel.lon_deg],
-      zoom: SELECTED_ENTITY_FOCUS_ZOOM,
+      zoom: 7,
+      heightM: SELECTED_ENTITY_FOCUS_HEIGHT_M,
       restoredFromMemory: false,
     };
   }
   if (visibleEntities.length > 0) {
+    const first = visibleEntities[0];
     return {
-      center: [visibleEntities[0].lat_deg, visibleEntities[0].lon_deg],
-      zoom: DEFAULT_MAP_ZOOM,
+      center: [first.lat_deg, first.lon_deg],
+      zoom: 4,
+      heightM: DEFAULT_VIEW_HEIGHT_M,
       restoredFromMemory: false,
     };
   }
   return {
     center: [35.0, -40.0],
-    zoom: DEFAULT_MAP_ZOOM,
+    zoom: 4,
+    heightM: DEFAULT_VIEW_HEIGHT_M,
     restoredFromMemory: false,
   };
-}
-
-/**
- * World outer ring + geodesic inner ring for FoV "flashlight" (Leaflet [lat, lng]).
- * Inner ring matches WGS84 geodesic distance (same convention as server / `Circle` radius in m).
- * Outer is clockwise; inner is counter-clockwise so SVG evenodd/nonzero both subtract the hole.
- */
-function worldShadeWithHoleRing(centerLat, centerLon, footprintRadiusM) {
-  const r = Math.min(Math.max(Number(footprintRadiusM) || 0, 15_000), 5_000_000);
-  const outer = [
-    [-89.9, -180],
-    [-89.9, 180],
-    [89.9, 180],
-    [89.9, -180],
-    [-89.9, -180],
-  ];
-  const steps = 72;
-  const inner = [];
-  for (let i = 0; i < steps; i++) {
-    const brng = (i / steps) * 360;
-    const { latDeg, lonDeg } = geodesicDirect(centerLat, centerLon, brng, r);
-    inner.push([latDeg, lonDeg]);
-  }
-  return [outer, inner];
-}
-
-/** Small nadir “eyeball” for selected satellite FoV center (not a SIDC / unit symbol). */
-function createSatelliteNadirEyeDivIcon() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
-  <circle cx="13" cy="13" r="11.5" fill="rgba(15,23,42,0.94)" stroke="#86efac" stroke-width="1.2"/>
-  <ellipse cx="13" cy="13" rx="8.5" ry="5" fill="none" stroke="#a7f3d0" stroke-width="1.1"/>
-  <circle cx="13" cy="13" r="3.25" fill="#38bdf8"/>
-  <circle cx="14.4" cy="11.7" r="0.95" fill="#f8fafc" opacity="0.92"/>
-</svg>`;
-  return L.divIcon({
-    className: 'satellite-nadir-eye-marker',
-    html: `<div title="Nadir — approximate center of field of view" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 2px 5px rgba(0,0,0,0.5));pointer-events:none;">${svg}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-  });
 }
 
 const MapView = ({
@@ -268,13 +155,16 @@ const MapView = ({
     b: null,
   });
   const outerRef = useRef(null);
+  const containerRef = useRef(null);
   const planningLayerRef = useRef(null);
   const planWaypointsRef = useRef(planWaypoints);
   const racetrackDraftRef = useRef(racetrackDraft);
   const selectedEntityIdRef = useRef(selectedEntityId);
   const [outerSize, setOuterSize] = useState({ width: 0, height: 0 });
-
-  const satelliteNadirEyeIcon = useMemo(() => createSatelliteNadirEyeDivIcon(), []);
+  const [viewer, setViewer] = useState(null);
+  /** Set when Cesium.Viewer fails (e.g. WebGL); keeps tab chrome usable. */
+  const [viewerInitError, setViewerInitError] = useState(null);
+  const deferredFocusAppliedRef = useRef(false);
 
   useEffect(() => {
     planWaypointsRef.current = planWaypoints;
@@ -283,7 +173,7 @@ const MapView = ({
   });
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socket) return undefined;
     const onRejected = (err) => {
       console.warn('[movement_order_rejected]', err);
     };
@@ -338,7 +228,7 @@ const MapView = ({
   }, []);
 
   useEffect(() => {
-    if (!outerRef.current) return;
+    if (!outerRef.current) return undefined;
 
     const el = outerRef.current;
     const ro = new ResizeObserver((entries) => {
@@ -354,6 +244,149 @@ const MapView = ({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return undefined;
+
+    let v;
+    try {
+      v = new Cesium.Viewer(containerRef.current, {
+        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+        baseLayerPicker: false,
+        animation: false,
+        timeline: false,
+        fullscreenButton: false,
+        vrButton: false,
+        homeButton: false,
+        sceneModePicker: false,
+        geocoder: false,
+        navigationHelpButton: false,
+        skyBox: false,
+        skyAtmosphere: false,
+        shouldAnimate: false,
+        imageryProvider: false,
+        selectionIndicator: false,
+        infoBox: false,
+      });
+
+      v.imageryLayers.addImageryProvider(
+        new Cesium.SingleTileImageryProvider({
+          url: BLUE_MARBLE_WORLD_IMAGE_URL,
+          rectangle: Cesium.Rectangle.fromDegrees(-180.0, -90.0, 180.0, 90.0),
+          tileWidth: BLUE_MARBLE_TILE_WIDTH,
+          tileHeight: BLUE_MARBLE_TILE_HEIGHT,
+          credit: 'NASA Visible Earth — Blue Marble',
+        }),
+      );
+      v.scene.globe.show = true;
+
+      const [lat0, lon0] = mapBootstrap.center;
+      v.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(lon0, lat0, mapBootstrap.heightM),
+      });
+
+      setViewerInitError(null);
+      setViewer(v);
+    } catch (err) {
+      console.error('[MapView] Cesium.Viewer failed', err);
+      setViewerInitError(err instanceof Error ? err.message : String(err));
+      setViewer(null);
+      return undefined;
+    }
+
+    return () => {
+      try {
+        v?.destroy?.();
+      } catch (e) {
+        console.warn('[MapView] viewer destroy', e);
+      }
+      setViewer(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per mount
+  }, []);
+
+  useEffect(() => {
+    if (!viewer) return undefined;
+    const canvas = viewer.scene.canvas;
+    const onCtx = (e) => e.preventDefault();
+    canvas.addEventListener('contextmenu', onCtx);
+    return () => canvas.removeEventListener('contextmenu', onCtx);
+  }, [viewer]);
+
+  useEffect(() => {
+    if (!viewer || !outerRef.current) return undefined;
+    const ro = new ResizeObserver(() => {
+      try {
+        viewer.resize();
+        viewer.scene.requestRender?.();
+      } catch {
+        /* viewer may be destroyed between tick and callback */
+      }
+    });
+    ro.observe(outerRef.current);
+    return () => ro.disconnect();
+  }, [viewer]);
+
+  const sessionIdForMap = session?.id ?? '';
+
+  useEffect(() => {
+    if (!viewer) return undefined;
+
+    const camera = viewer.camera;
+    const save = () => {
+      try {
+        const canvas = viewer.scene.canvas;
+        const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+        const ellipsoid = viewer.scene.globe.ellipsoid;
+        const cartesian = viewer.camera.pickEllipsoid(center, ellipsoid);
+        if (!cartesian || !sessionIdForMap) return;
+        const c = Cesium.Cartographic.fromCartesian(cartesian);
+        const lat = Cesium.Math.toDegrees(c.latitude);
+        const lon = Cesium.Math.toDegrees(c.longitude);
+        const h = viewer.camera.positionCartographic.height;
+        const z = zoomFromHeightMeters(h);
+        writeMapViewMemory(sessionIdForMap, [lat, lon], z, h);
+      } catch {
+        /* viewer torn down during save */
+      }
+    };
+
+    camera.moveEnd.addEventListener(save);
+    return () => {
+      try {
+        camera.moveEnd.removeEventListener(save);
+      } catch {
+        /* viewer.destroy() may have run before this cleanup */
+      }
+    };
+  }, [viewer, sessionIdForMap]);
+
+  useEffect(() => {
+    if (!viewer) return undefined;
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction((click) => {
+      const picked = viewer.scene.pick(click.position);
+      if (!Cesium.defined(picked) || !picked.id) return;
+      const ent = picked.id;
+      const rawId = ent instanceof Cesium.Entity ? ent.id : ent?.id;
+      if (rawId == null) return;
+      const sid = String(rawId);
+      if (sid.startsWith('unit-')) {
+        const entityId = sid.slice(5);
+        mapClickDebug('marker:click:cesium', { entityId });
+        setSelectedEntityId(entityId);
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    return () => {
+      try {
+        handler.destroy();
+      } catch {
+        /* handler / canvas may already be torn down with viewer */
+      }
+    };
+  }, [viewer, setSelectedEntityId]);
 
   const playerTeam = String(session?.player_team ?? 'white').toLowerCase();
 
@@ -378,8 +411,6 @@ const MapView = ({
           ? blueTeamEntities
           : entities;
 
-  const sessionIdForMap = session?.id ?? '';
-
   useEffect(() => {
     if (!selectedEntityId) return;
     if (!visibleEntities.some((s) => s.id === selectedEntityId)) {
@@ -392,38 +423,192 @@ const MapView = ({
     [visibleEntities, selectedEntityId],
   );
 
-  const serverActivePathPositions = useMemo(() => {
-    const dp = selectedEntity?.display_path_deg;
-    if (!Array.isArray(dp) || dp.length < 2) return null;
-    return dp.map((p) => [p.lat_deg, p.lon_deg]);
-  }, [selectedEntity?.display_path_deg]);
+  const focusCameraOnEntity = useCallback(
+    (entity) => {
+      if (!viewer) return;
+      const haeM = haeFeetToMeters(entity.hae_ft);
+      const heightM = Math.max(ROSTER_DBLCLICK_FOCUS_HEIGHT_M, haeM * 1.2);
+      const destination = Cesium.Cartesian3.fromDegrees(
+        entity.lon_deg,
+        entity.lat_deg,
+        heightM,
+      );
+      try {
+        viewer.camera.flyTo({
+          destination,
+          duration: ROSTER_FOCUS_FLY_DURATION_S,
+          complete: () => {
+            viewer.scene.requestRender?.();
+          },
+        });
+      } catch {
+        /* viewer torn down */
+      }
+    },
+    [viewer],
+  );
 
-  const satelliteSelectionOverlays = useMemo(() => {
-    const sp = selectedEntity?.space;
-    if (!sp || typeof sp.footprint_radius_m !== 'number') return null;
-    const lat = selectedEntity.lat_deg;
-    const lon = selectedEntity.lon_deg;
-    const footprintRadiusM = Math.min(
-      Math.max(sp.footprint_radius_m, 15_000),
-      5_000_000,
-    );
-    const rings = worldShadeWithHoleRing(lat, lon, footprintRadiusM);
-    const groundTrack = Array.isArray(sp.ground_track_deg)
-      ? sp.ground_track_deg.map((p) => [p.lat_deg, p.lon_deg])
-      : [];
-    const future = Array.isArray(sp.future_footprint_deg)
-      ? sp.future_footprint_deg.map((p) => [p.lat_deg, p.lon_deg])
-      : [];
-    return {
-      rings,
-      center: [lat, lon],
-      footprintRadiusM,
-      groundTrack,
-      future,
+  useEffect(() => {
+    if (!viewer) return;
+    if (mapBootstrap.restoredFromMemory || deferredFocusAppliedRef.current) return;
+    if (!visibleEntities.length) return;
+    const sel =
+      selectedEntityId && visibleEntities.find((s) => s.id === selectedEntityId);
+    const target = sel ?? visibleEntities[0];
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(
+        target.lon_deg,
+        target.lat_deg,
+        sel ? SELECTED_ENTITY_FOCUS_HEIGHT_M : DEFAULT_VIEW_HEIGHT_M,
+      ),
+    });
+    deferredFocusAppliedRef.current = true;
+  }, [viewer, visibleEntities, selectedEntityId, mapBootstrap.restoredFromMemory]);
+
+  useEffect(() => {
+    if (!viewer) return;
+
+    const keepIds = new Set();
+    for (const entity of entities) {
+      if (!entity.hide_map_marker) keepIds.add(`unit-${entity.id}`);
+    }
+
+    const toRemove = [];
+    viewer.entities.values.forEach((e) => {
+      const id = e.id != null ? String(e.id) : '';
+      if (id.startsWith('unit-') && !keepIds.has(id)) {
+        toRemove.push(e);
+      }
+    });
+    toRemove.forEach((e) => viewer.entities.remove(e));
+
+    for (const entity of entities) {
+      if (entity.hide_map_marker) continue;
+      const selected = isGlobeUnitSelected(entity, selectedEntityId);
+      const uid = `unit-${entity.id}`;
+
+      let image;
+      let width = 32;
+      let height = 32;
+
+      try {
+        const normalizedSidc = normalizeSidc(entity.sidc);
+        const symbol = new ms.Symbol(normalizedSidc, {
+          size: selected ? 36 : 28,
+          standard: MILSYMBOL_STANDARD,
+          direction: Number(entity.heading_deg ?? 0),
+          outlineWidth: selected ? 6 : 0,
+          outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
+        });
+        image = svgToImageDataUrl(symbol.asSVG());
+        const maxEdge = selected ? 42 : 34;
+        const wh = billboardPixelSizeFromMilsymbol(symbol, maxEdge);
+        width = wh.width;
+        height = wh.height;
+      } catch {
+        image = svgToImageDataUrl(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
+        );
+      }
+
+      const haeM = haeFeetToMeters(entity.hae_ft);
+      const position = Cesium.Cartesian3.fromDegrees(
+        entity.lon_deg,
+        entity.lat_deg,
+        haeM,
+      );
+      const billboardOpts = {
+        image,
+        width,
+        height,
+        scale: selected ? 1.12 : 1.0,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+      };
+
+      const existing = viewer.entities.getById(uid);
+      if (Cesium.defined(existing)) {
+        existing.position = new Cesium.ConstantPositionProperty(position);
+        if (existing.billboard) {
+          existing.billboard.image = new Cesium.ConstantProperty(image);
+          existing.billboard.width = new Cesium.ConstantProperty(width);
+          existing.billboard.height = new Cesium.ConstantProperty(height);
+          existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.12 : 1.0);
+        }
+      } else {
+        viewer.entities.add({
+          id: uid,
+          position,
+          billboard: billboardOpts,
+        });
+      }
+    }
+
+    try {
+      viewer.scene.requestRender?.();
+    } catch {
+      /* viewer may be tearing down */
+    }
+  }, [viewer, entities, selectedEntityId]);
+
+  /** Authoritative planned path from the server (`display_path_deg`); cyan polyline. */
+  useEffect(() => {
+    if (!viewer) return;
+
+    const stripPrev = () => {
+      const toRemove = [];
+      viewer.entities.values.forEach((e) => {
+        const id = e.id != null ? String(e.id) : '';
+        if (id.startsWith('overlay-auth-path-')) toRemove.push(e);
+      });
+      toRemove.forEach((e) => viewer.entities.remove(e));
     };
-  }, [selectedEntity]);
 
-  // Unit card size is a fixed fraction of the map height.
+    stripPrev();
+
+    if (!selectedEntityId) {
+      try {
+        viewer.scene.requestRender?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const row = entities.find((e) => e.id === selectedEntityId);
+    const path = row?.display_path_deg;
+    if (!row || !path || path.length < 2) {
+      try {
+        viewer.scene.requestRender?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const haeM = haeFeetToMeters(row.hae_ft);
+    const h = Number.isFinite(haeM) ? haeM : 0;
+    const flat = [];
+    for (const p of path) {
+      flat.push(p.lon_deg, p.lat_deg, h);
+    }
+
+    viewer.entities.add({
+      id: `overlay-auth-path-${selectedEntityId}`,
+      polyline: {
+        positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
+        width: 4,
+        material: Cesium.Color.CYAN.withAlpha(0.88),
+      },
+    });
+
+    try {
+      viewer.scene.requestRender?.();
+    } catch {
+      /* ignore */
+    }
+  }, [viewer, entities, selectedEntityId]);
+
   const unitCardHeight = outerSize.height ? outerSize.height * 0.1 : 30;
   const unitCardWidth = unitCardHeight / 2;
   const unitIconSize = Math.max(8, Math.round(unitCardHeight * 0.55));
@@ -445,85 +630,34 @@ const MapView = ({
   const blueUnitIdFontSize = unitIdFontSize;
   const blueUnitGap = unitGap;
 
-  const markerIconsByEntityKey = useMemo(() => {
-    const next = new Map();
-    for (const entity of entities) {
-      const entityKey = `${entity.id}:${entity.sidc}`;
-      const selected = entity.id === selectedEntityId;
-      if (isMissileSidc(entity.sidc)) {
-        const color = entity.allegiance === 'hostile' ? '#ef4444' : '#3b82f6';
-        const heading = Number(entity.heading_deg ?? 0);
-        const maskId = `missile-mask-${entity.id}`;
-        const ring = selected
-          ? 'box-shadow: 0 0 0 3px #fbbf24, 0 0 14px rgba(251,191,36,0.9); border-radius: 50%;'
-          : '';
-        next.set(
-          entityKey,
-          L.divIcon({
-            className: selected ? 'custom-missile-icon map-entity-selected' : 'custom-missile-icon',
-            html: `
-              <div style="
-                color: ${color};
-                width: 32px;
-                height: 32px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                transform: rotate(${heading}deg);
-                transform-origin: 50% 50%;
-                ${ring}
-              ">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 ${MISSILE_OUTLINE_PNG_W} ${MISSILE_OUTLINE_PNG_H}" aria-hidden="true">
-                  <defs>
-                    <mask id="${maskId}" mask-type="alpha">
-                      <image
-                        href="${missileOutlinePngUrl}"
-                        x="0"
-                        y="0"
-                        width="${MISSILE_OUTLINE_PNG_W}"
-                        height="${MISSILE_OUTLINE_PNG_H}"
-                      />
-                    </mask>
-                  </defs>
-                  <rect
-                    x="0"
-                    y="0"
-                    width="${MISSILE_OUTLINE_PNG_W}"
-                    height="${MISSILE_OUTLINE_PNG_H}"
-                    fill="currentColor"
-                    mask="url(#${maskId})"
-                  />
-                </svg>
-              </div>
-            `,
-            iconSize: selected ? [40, 40] : [32, 32],
-            iconAnchor: selected ? [20, 20] : [16, 16],
-          })
-        );
-      } else {
-        next.set(
-          entityKey,
-          createMilSymbolIcon({
-            sidc: entity.sidc,
-            name: entity.name,
-            selected,
-          })
-        );
-      }
-    }
-    return next;
-  }, [entities, selectedEntityId]);
-
   return (
     <div ref={outerRef} style={{ height: '100%', width: '100%', position: 'relative' }}>
-      {/* Map first + z-index 0 so later overlays (roster, HUD) receive clicks — otherwise the map layer sits on top and blocks selection. */}
-      <MapContainer
-        center={mapBootstrap.center}
-        zoom={mapBootstrap.zoom}
-        zoomControl={false}
-        dragging={false}
-        boxZoom={false}
-        keyboard={false}
+      {viewerInitError && (
+        <div
+          role="alert"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 6000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            background: 'rgba(18,18,18,0.92)',
+            color: '#fecaca',
+            textAlign: 'center',
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        >
+          <div>
+            <strong style={{ display: 'block', marginBottom: 8 }}>Map failed to initialize</strong>
+            {viewerInitError}
+          </div>
+        </div>
+      )}
+      <div
+        ref={containerRef}
         style={{
           position: 'absolute',
           inset: 0,
@@ -531,21 +665,11 @@ const MapView = ({
           height: '100%',
           width: '100%',
         }}
-      >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
-        />
-        <MapViewMemoryWriter sessionId={sessionIdForMap} />
-        <MapViewDeferredGeoFocus
-          fromMemory={mapBootstrap.restoredFromMemory}
-          selectedEntityId={selectedEntityId}
-          visibleEntities={visibleEntities}
-        />
-        <MapKeyboardPanLayer />
-        <MapPointerDebugLayer />
-        <MovementPlanningLayer
+      />
+      {viewer && (
+        <MovementPlanningCesium
           ref={planningLayerRef}
+          viewer={viewer}
           sessionId={session?.id}
           socket={socket}
           selectedEntity={selectedEntity}
@@ -557,97 +681,7 @@ const MapView = ({
           setRacetrackDraft={setRacetrackDraft}
           onPlanCommitted={clearMovementPlan}
         />
-        {serverActivePathPositions && (
-          <Polyline
-            positions={serverActivePathPositions}
-            pathOptions={{
-              color: '#38bdf8',
-              weight: 3,
-              opacity: 0.92,
-              dashArray: '12 8',
-            }}
-          />
-        )}
-        {satelliteSelectionOverlays && (
-          <Pane name="satelliteFov" style={{ zIndex: 380 }}>
-            <Polygon
-              positions={satelliteSelectionOverlays.rings}
-              pathOptions={{
-                stroke: false,
-                fillColor: '#020617',
-                fillOpacity: 0.58,
-                // Leaflet default is evenodd; keep explicit for SVG hole subtraction.
-                fillRule: 'evenodd',
-                interactive: false,
-              }}
-            />
-            <Circle
-              center={satelliteSelectionOverlays.center}
-              radius={satelliteSelectionOverlays.footprintRadiusM}
-              pathOptions={{
-                color: '#86efac',
-                weight: 2,
-                opacity: 0.95,
-                fillColor: '#86efac',
-                fillOpacity: 0.14,
-              }}
-            />
-            {satelliteSelectionOverlays.groundTrack.length > 1 && (
-              <Polyline
-                positions={satelliteSelectionOverlays.groundTrack}
-                pathOptions={{ color: '#22d3ee', weight: 2, opacity: 0.9 }}
-              />
-            )}
-            {satelliteSelectionOverlays.future.length > 1 && (
-              <Polyline
-                positions={satelliteSelectionOverlays.future}
-                pathOptions={{
-                  color: '#fbbf24',
-                  weight: 2,
-                  opacity: 0.4,
-                  dashArray: '10 12',
-                }}
-              />
-            )}
-            <Marker
-              position={satelliteSelectionOverlays.center}
-              icon={satelliteNadirEyeIcon}
-              interactive={false}
-              keyboard={false}
-              zIndexOffset={800}
-            />
-          </Pane>
-        )}
-        {visibleEntities.filter((e) => !e.hide_map_marker).map((entity) => {
-          const entityKey = `${entity.id}:${entity.sidc}`;
-          const icon = markerIconsByEntityKey.get(entityKey);
-          return (
-            <Marker
-              key={entityKey}
-              position={[entity.lat_deg, entity.lon_deg]}
-              icon={icon}
-              eventHandlers={{
-                click: (e) => {
-                  mapClickDebug('marker:click:handler', {
-                    entityId: entity.id,
-                    entityKey,
-                    hasIcon: Boolean(icon),
-                    latlng: e.latlng,
-                    domTarget: e.originalEvent?.target?.tagName,
-                  });
-                  L.DomEvent.stopPropagation(e.originalEvent);
-                  setSelectedEntityId(entity.id);
-                  mapClickDebug('marker:click:setSelectedEntityId', entity.id);
-                },
-              }}
-            >
-              <Popup>
-                {entity.name} ({entity.id})
-              </Popup>
-            </Marker>
-          );
-        })}
-      </MapContainer>
+      )}
 
       <div
         style={{
@@ -671,18 +705,14 @@ const MapView = ({
           {visibleEntities.map((s) => s.id).join(', ')}
         </div>
         <div style={{ marginTop: 8, opacity: 0.9, lineHeight: 1.4 }}>
-          <strong>Map</strong>: <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>W</kbd>
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>A</kbd>
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>S</kbd>
-          <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>D</kbd> pan (no mouse
-          drag). Scroll wheel zooms.
+          <strong>Map</strong>: default Cesium camera (mouse / touch). Use the viewer’s help (?) control for gestures.
         </div>
         <div style={{ marginTop: 6, opacity: 0.9, lineHeight: 1.4 }}>
           <strong>Movement plan</strong>: select a movable unit → <strong>right-click</strong> waypoints →{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>O</kbd>
-          + drag orbit or{' '}
+          + right-click/drag orbit or{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>R</kbd>
-          + A → B → drag radius.{' '}
+          + right-click A → right-click B → right-click/drag radius.{' '}
           <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd> clears
           plan / preview first; another <kbd style={{ background: '#333', padding: '1px 5px', borderRadius: 3 }}>Esc</kbd>{' '}
           deselects.
@@ -705,6 +735,11 @@ const MapView = ({
             Selected: <strong>{selectedEntity.name}</strong> ({selectedEntity.id})
             {!selectedEntity.movable && (
               <span style={{ color: '#f87171' }}> — not movable</span>
+            )}
+            {selectedEntity.movable && selectedEntity.movement_kind && (
+              <div style={{ marginTop: 4, opacity: 0.88, fontSize: 11 }}>
+                Sim movement: <strong>{selectedEntity.movement_kind}</strong>
+              </div>
             )}
           </div>
         )}
@@ -736,6 +771,12 @@ const MapView = ({
               onClick={() => {
                 mapClickDebug('roster:red:click', entity.id);
                 setSelectedEntityId(entity.id);
+              }}
+              onDoubleClick={(e) => {
+                e.preventDefault();
+                mapClickDebug('roster:red:dblclick', entity.id);
+                setSelectedEntityId(entity.id);
+                focusCameraOnEntity(entity);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -784,7 +825,6 @@ const MapView = ({
                   justifyContent: 'center',
                   flexShrink: 0,
                 }}
-                // milsymbol returns SVG XML string
                 dangerouslySetInnerHTML={{ __html: svg }}
               />
               <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
@@ -848,6 +888,12 @@ const MapView = ({
                   mapClickDebug('roster:blue:click', entity.id);
                   setSelectedEntityId(entity.id);
                 }}
+                onDoubleClick={(e) => {
+                  e.preventDefault();
+                  mapClickDebug('roster:blue:dblclick', entity.id);
+                  setSelectedEntityId(entity.id);
+                  focusCameraOnEntity(entity);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -895,7 +941,6 @@ const MapView = ({
                     justifyContent: 'center',
                     flexShrink: 0,
                   }}
-                  // milsymbol returns SVG XML string
                   dangerouslySetInnerHTML={{ __html: svg }}
                 />
                 <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
