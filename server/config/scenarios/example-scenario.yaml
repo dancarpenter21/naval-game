@@ -3,7 +3,7 @@
 #                   config/entities/example-blue-airplane.yaml (blue-airplane),
 #                   config/entities/example-blue-missile.yaml (blue-missile),
 #                   config/entities/example-satellite.yaml (example-satellite).
-name: "Example encounter"
+name: "Basic Encounter"
 description: |
   A hostile surface combatant is operating near a friendly air asset.
   Use this scenario to exercise basic tracking and coordination between red and blue forces.
@@ -29,17 +29,17 @@ red_entities:
     hae_ft: 0.0
     heading_deg: 95.0
 blue_entities:
-  # Air tracks: same WGS84 HAE (ft) for fixed-wing and missile (~10 km ≈ FL330).
+  # Air tracks: same WGS84 HAE (ft) for fixed-wing and carried stores (~10 km ≈ FL330).
   - id: blue-airplane
     lat_deg: 35.4
     lon_deg: -40.1
     hae_ft: 32808.4
     heading_deg: 275.0
-  - id: blue-missile
-    lat_deg: 35.2
-    lon_deg: -40.4
-    hae_ft: 32808.4
-    heading_deg: 280.0
+    hardpoints:
+      hp1: blue-missile
+      hp2: blue-missile
+      hp3: blue-missile
+      hp4: blue-missile
   - example-satellite
   - id: pentagon
     lat_deg: 38.8710
