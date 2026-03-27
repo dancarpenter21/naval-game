@@ -21,3 +21,15 @@
           entity: code_110103
           modifier_one: code_00
           modifier_two: code_00
+    # Loadout only: missiles are not spawned as world entities until launch (future fire event).
+    - kind: hardpoints
+      data:
+        mounts:
+          - id: hp1
+            allowed_entity_ids: [blue-missile]
+          - id: hp2
+            allowed_entity_ids: [blue-missile]
+          - id: hp3
+            allowed_entity_ids: [blue-missile]
+          - id: hp4
+            allowed_entity_ids: [blue-missile]

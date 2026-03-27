@@ -5,6 +5,12 @@ export const LatLonDegSchema = z.object({
   lon_deg: z.number(),
 });
 
+export const HardpointMountSchema = z.object({
+  id: z.string(),
+  allowed_entity_ids: z.array(z.string()).optional().default([]),
+  carried_entity_id: z.string().optional().nullable(),
+});
+
 export const SpaceSnapshotSchema = z.object({
   line1: z.string(),
   line2: z.string(),
@@ -34,6 +40,8 @@ export const EntityDtoSchema = z.object({
   display_path_deg: z.array(LatLonDegSchema).optional().nullable(),
   /** Server: cruise | transit_waypoints | orbit | racetrack */
   movement_kind: z.string().optional().nullable(),
+  attached_to_id: z.string().optional().nullable(),
+  hardpoints: z.array(HardpointMountSchema).optional().nullable(),
 });
 
 export const SpaceCoverageEventSchema = z.object({

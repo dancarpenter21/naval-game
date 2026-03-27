@@ -1,6 +1,7 @@
 //! Scenario definitions loaded from `config/scenarios/*.yaml`.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -23,6 +24,9 @@ pub enum ScenarioEntityRef {
         hae_ft: Option<f64>,
         #[serde(default)]
         heading_deg: Option<f64>,
+        /// Per-mount loadout: mount id → entity template id (must be allowed by the template hardpoint).
+        #[serde(default)]
+        hardpoints: Option<HashMap<String, String>>,
     },
 }
 
@@ -393,6 +397,7 @@ blue_entities:
                 lon_deg: None,
                 hae_ft: None,
                 heading_deg: Some(45.0),
+                hardpoints: None,
             }]
         );
         assert_eq!(
@@ -403,6 +408,34 @@ blue_entities:
                 lon_deg: Some(-20.0),
                 hae_ft: None,
                 heading_deg: None,
+                hardpoints: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn deserializes_entity_placement_with_hardpoints_loadout() {
+        let yaml = r#"
+blue_entities:
+  - id: blue-airplane
+    lat_deg: 1.0
+    hardpoints:
+      hp1: blue-missile
+      hp2: blue-missile
+"#;
+        let cfg: ScenarioConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut expected = HashMap::new();
+        expected.insert("hp1".into(), "blue-missile".into());
+        expected.insert("hp2".into(), "blue-missile".into());
+        assert_eq!(
+            cfg.blue_entities,
+            vec![ScenarioEntityRef::Placement {
+                id: "blue-airplane".into(),
+                lat_deg: Some(1.0),
+                lon_deg: None,
+                hae_ft: None,
+                heading_deg: None,
+                hardpoints: Some(expected),
             }]
         );
     }

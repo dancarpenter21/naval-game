@@ -35,6 +35,15 @@ pub struct SpaceSnapshotDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardpointMountSnapshotDto {
+    pub id: String,
+    #[serde(default)]
+    pub allowed_entity_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_entity_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceCoverageEventDto {
     pub kind: String,
     pub satellite_id: String,
@@ -73,6 +82,12 @@ pub struct EntitySnapshotDto {
     /// TLE / footprint / ground track when this entity is a space asset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space: Option<SpaceSnapshotDto>,
+    /// Parent entity id when this entity is attached (e.g. a missile spawned after launch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attached_to_id: Option<String>,
+    /// Internal loadout (not spawned until weapons release). Omitted when empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardpoints: Option<Vec<HardpointMountSnapshotDto>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

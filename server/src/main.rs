@@ -36,8 +36,8 @@ use dto::{
     ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, IssueMovementOrderDto,
     JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto, PlayersListRequestDto,
     RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto, SetTimeScaleDto,
-    EntitySnapshotDto, LatLonDegDto, SpaceCoverageEventDto, SnapshotRequestDto, StopSessionDto,
-    ScenarioSummaryDto,
+    EntitySnapshotDto, HardpointMountSnapshotDto, LatLonDegDto, SpaceCoverageEventDto,
+    SnapshotRequestDto, StopSessionDto, ScenarioSummaryDto,
 };
 use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
 
@@ -67,6 +67,70 @@ struct SpaceOrbitYaml {
     fov_half_angle_deg: f64,
     #[serde(default)]
     hide_map_marker: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HardpointMountYaml {
+    id: String,
+    #[serde(default)]
+    allowed_entity_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HardpointsYaml {
+    mounts: Vec<HardpointMountYaml>,
+}
+
+/// Runtime loadout: missiles are **not** spawned until launch; this tracks what is loaded per mount.
+#[derive(Debug, Clone)]
+struct HardpointMountState {
+    id: String,
+    allowed_entity_ids: Vec<String>,
+    carried_entity_id: Option<String>,
+}
+
+fn parse_hardpoints_from_template(entity_template: &EntityConfig) -> Option<Vec<HardpointMountState>> {
+    let comp = entity_template
+        .components
+        .iter()
+        .find(|c| c.kind == "hardpoints")?;
+    let yaml: HardpointsYaml = serde_yaml::from_value(comp.data.clone()).ok()?;
+    Some(
+        yaml.mounts
+            .into_iter()
+            .map(|m| HardpointMountState {
+                id: m.id,
+                allowed_entity_ids: m.allowed_entity_ids,
+                carried_entity_id: None,
+            })
+            .collect(),
+    )
+}
+
+fn validate_hardpoints_against_world(
+    world: &WorldTemplate,
+    hardpoints: Option<&Vec<HardpointMountState>>,
+) {
+    let Some(mounts) = hardpoints else {
+        return;
+    };
+    for m in mounts {
+        let Some(cid) = m.carried_entity_id.as_ref() else {
+            continue;
+        };
+        if !m.allowed_entity_ids.is_empty() && !m.allowed_entity_ids.contains(cid) {
+            warn!(
+                "Hardpoint mount id={} carried_entity_id={} not in allowed_entity_ids={:?}",
+                m.id, cid, m.allowed_entity_ids
+            );
+        }
+        if !world.entities.iter().any(|e| e.id == *cid) {
+            warn!(
+                "Hardpoint mount id={} references unknown carried_entity_id={}",
+                m.id, cid
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +181,10 @@ struct EntityState {
     space: Option<space::SpaceOrbitRuntime>,
     /// Last space overlay sent to clients (updated on space ticks).
     space_overlay: Option<crate::dto::SpaceSnapshotDto>,
+    /// Parent entity id when this entity is attached (e.g. a missile spawned after launch).
+    attached_to_id: Option<String>,
+    /// Hardpoint loadout (from template). Carried weapons exist here only until spawned on fire.
+    hardpoints: Option<Vec<HardpointMountState>>,
     hide_map_marker: bool,
 }
 
@@ -307,6 +375,22 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 .movement
                 .as_ref()
                 .map(|_| movement::movement_kind_wire(&s.movement_mode).to_string());
+            let hardpoints = s.hardpoints.as_ref().and_then(|mounts| {
+                if mounts.is_empty() {
+                    None
+                } else {
+                    Some(
+                        mounts
+                            .iter()
+                            .map(|m| HardpointMountSnapshotDto {
+                                id: m.id.clone(),
+                                allowed_entity_ids: m.allowed_entity_ids.clone(),
+                                carried_entity_id: m.carried_entity_id.clone(),
+                            })
+                            .collect(),
+                    )
+                }
+            });
             EntitySnapshotDto {
                 id: s.id.clone(),
                 name: s.name.clone(),
@@ -323,6 +407,8 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 display_path_deg,
                 movement_kind,
                 space: s.space_overlay.clone(),
+                attached_to_id: s.attached_to_id.clone(),
+                hardpoints,
             }
         })
         .collect()
@@ -331,6 +417,9 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
 /// Integrate simple kinematics for `dt_sim_s` (simulated seconds, not wall time).
 fn integrate_entities(world: &mut [EntityState], dt_sim_s: f64) {
     for entity in world.iter_mut() {
+        if entity.attached_to_id.is_some() {
+            continue;
+        }
         if entity.space.is_some() {
             continue;
         }
@@ -345,6 +434,36 @@ fn integrate_entities(world: &mut [EntityState], dt_sim_s: f64) {
             &mut entity.movement_mode,
             dt_sim_s,
         );
+    }
+    sync_attached_entities(world);
+}
+
+fn sync_attached_entities(world: &mut [EntityState]) {
+    let poses: HashMap<String, (f64, f64, f64, f64)> = world
+        .iter()
+        .map(|e| {
+            (
+                e.id.clone(),
+                (
+                    e.transform.lat_deg,
+                    e.transform.lon_deg,
+                    e.transform.hae_ft,
+                    e.transform.heading_deg,
+                ),
+            )
+        })
+        .collect();
+    for e in world.iter_mut() {
+        let Some(parent_id) = e.attached_to_id.as_ref() else {
+            continue;
+        };
+        let Some((lat, lon, hae_ft, heading_deg)) = poses.get(parent_id).copied() else {
+            continue;
+        };
+        e.transform.lat_deg = lat;
+        e.transform.lon_deg = lon;
+        e.transform.hae_ft = hae_ft;
+        e.transform.heading_deg = heading_deg;
     }
 }
 
@@ -558,6 +677,7 @@ fn entity_state_from_template(
     instance_id: String,
     initial_transform: TransformWorld,
 ) -> EntityState {
+    let hardpoints = parse_hardpoints_from_template(entity_template);
     let mut movement: Option<MovementConfig> = None;
     let mut symbol: Option<SymbolConfig> = None;
     let mut space: Option<space::SpaceOrbitRuntime> = None;
@@ -606,6 +726,8 @@ fn entity_state_from_template(
         symbol: symbol.expect("entity missing symbol component"),
         space,
         space_overlay: None,
+        attached_to_id: None,
+        hardpoints,
         hide_map_marker,
     }
 }
@@ -635,6 +757,54 @@ fn apply_scenario_transform_overrides(t: &mut TransformWorld, entry: &ScenarioEn
     }
 }
 
+/// Applies per-scenario hardpoint loadout (mount id → carried template id) after template parsing.
+fn apply_scenario_hardpoint_loadout(
+    entity: &mut EntityState,
+    entry: &ScenarioEntityRef,
+    world: &WorldTemplate,
+) {
+    let ScenarioEntityRef::Placement { hardpoints: scenario_load, .. } = entry else {
+        return;
+    };
+    let Some(load_map) = scenario_load else {
+        return;
+    };
+    if load_map.is_empty() {
+        return;
+    }
+    let Some(mounts) = entity.hardpoints.as_mut() else {
+        warn!(
+            "Scenario hardpoints for entity {} but template has no hardpoints component",
+            entity.id
+        );
+        return;
+    };
+    for (mount_id, carried_id) in load_map {
+        let Some(mount) = mounts.iter_mut().find(|m| m.id == *mount_id) else {
+            warn!(
+                "Scenario hardpoints: unknown mount id {} for entity {}",
+                mount_id, entity.id
+            );
+            continue;
+        };
+        if !mount.allowed_entity_ids.is_empty() && !mount.allowed_entity_ids.contains(carried_id) {
+            warn!(
+                "Scenario hardpoints: mount {} carried {} not in allowed_entity_ids {:?}",
+                mount_id, carried_id, mount.allowed_entity_ids
+            );
+            continue;
+        }
+        if !world.entities.iter().any(|e| e.id == *carried_id) {
+            warn!(
+                "Scenario hardpoints: mount {} carried {} not found in world templates",
+                mount_id, carried_id
+            );
+            continue;
+        }
+        mount.carried_entity_id = Some(carried_id.clone());
+    }
+}
+
 fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScenario) -> Vec<EntityState> {
     let spawns = &scenario.config.spawns;
     let red = &scenario.config.red_entities;
@@ -656,7 +826,9 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
                         format!("{}-{}", entity_template.id, i + 1)
                     };
                     let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_ft: 0.0, heading_deg: 0.0 };
-                    entities.push(entity_state_from_template(entity_template, instance_id, transform));
+                    let entity = entity_state_from_template(entity_template, instance_id, transform);
+                    validate_hardpoints_against_world(world_template, entity.hardpoints.as_ref());
+                    entities.push(entity);
                 }
             } else {
                 warn!(
@@ -675,17 +847,21 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
             let instance_id = entity_template.id.clone();
             let mut transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_ft: 0.0, heading_deg: 0.0 };
             apply_scenario_transform_overrides(&mut transform, entry);
-            let entity = entity_state_from_template(entity_template, instance_id, transform);
+            let mut entity = entity_state_from_template(entity_template, instance_id, transform);
+            apply_scenario_hardpoint_loadout(&mut entity, entry, world_template);
+            validate_hardpoints_against_world(world_template, entity.hardpoints.as_ref());
             entities.push(entity);
         }
     } else {
         for entity_template in &world_template.entities {
             let transform = TransformWorld { lat_deg: 0.0, lon_deg: 0.0, hae_ft: 0.0, heading_deg: 0.0 };
-            entities.push(entity_state_from_template(
+            let entity = entity_state_from_template(
                 entity_template,
                 entity_template.id.clone(),
-                transform
-            ));
+                transform,
+            );
+            validate_hardpoints_against_world(world_template, entity.hardpoints.as_ref());
+            entities.push(entity);
         }
     }
 
@@ -1313,6 +1489,18 @@ fn on_connect(
                             "movement_order_rejected",
                             ErrorDto {
                                 message: "That unit cannot receive movement orders.".to_string(),
+                            },
+                        )
+                        .ok();
+                    return;
+                }
+                if entity.attached_to_id.is_some() {
+                    socket
+                        .emit(
+                            "movement_order_rejected",
+                            ErrorDto {
+                                message: "That unit is attached and cannot move independently."
+                                    .to_string(),
                             },
                         )
                         .ok();
