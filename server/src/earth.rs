@@ -15,6 +15,8 @@ fn wgs84() -> &'static Geodesic {
 pub const WGS84_A_M: f64 = 6378137.0;
 
 /// International foot in meters (exact definition). Used to convert WGS84 HAE between ft (wire format) and m (physics / Cesium).
+///
+/// Keep in sync with `client/src/units/length.js` (`METERS_PER_INTERNATIONAL_FOOT`).
 pub const METERS_PER_INTERNATIONAL_FOOT: f64 = 0.3048;
 
 #[inline]
