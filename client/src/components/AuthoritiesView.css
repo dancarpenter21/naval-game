@@ -1,0 +1,254 @@
+.authorities-view {
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 1rem 1.25rem 1rem;
+  background: linear-gradient(165deg, #0f1419 0%, #121212 45%, #0d1117 100%);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.authorities-view--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 36rem;
+  margin: 0 auto;
+}
+
+.authorities-view__empty-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+  color: #94a3b8;
+}
+
+.authorities-view__empty-body {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.authorities-view__empty-body code {
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(96, 165, 250, 0.12);
+  color: #7dd3fc;
+}
+
+.authorities-view__header {
+  flex-shrink: 0;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+}
+
+.authorities-view__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: #e2e8f0;
+}
+
+.authorities-view__lede {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: rgba(148, 163, 184, 0.95);
+  max-width: 52rem;
+}
+
+.authorities-view__lede a {
+  color: #38bdf8;
+  text-decoration: none;
+}
+
+.authorities-view__lede a:hover {
+  text-decoration: underline;
+}
+
+/* —— React Flow host (fills tab below header) —— */
+.authority-flow-host {
+  flex: 1;
+  min-height: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+  background: #121212;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.authority-react-flow {
+  width: 100%;
+  height: 100%;
+  --xy-edge-stroke: rgba(56, 189, 248, 0.45);
+  --xy-edge-stroke-selected: rgba(97, 218, 251, 0.85);
+  --xy-background-pattern-dots-color: rgba(97, 218, 251, 0.07);
+}
+
+.authority-react-flow .react-flow__edge-path {
+  stroke-width: 1.5px;
+}
+
+.authority-flow-controls button {
+  background: rgba(30, 41, 59, 0.95) !important;
+  border: 1px solid rgba(148, 163, 184, 0.25) !important;
+  color: #e2e8f0 !important;
+}
+
+.authority-flow-controls button:hover {
+  background: rgba(51, 65, 85, 0.98) !important;
+  border-color: rgba(97, 218, 251, 0.45) !important;
+}
+
+.authority-flow-minimap {
+  background: rgba(15, 23, 42, 0.92) !important;
+  border: 1px solid rgba(148, 163, 184, 0.2) !important;
+  border-radius: 8px !important;
+}
+
+.authority-flow-minimap .react-flow__minimap-mask {
+  fill: rgba(15, 23, 42, 0.65) !important;
+}
+
+.authority-flow-minimap .react-flow__minimap-node {
+  fill: rgba(30, 41, 59, 0.95) !important;
+  stroke: rgba(56, 189, 248, 0.35) !important;
+}
+
+/* —— Custom node (matches prior workbench card look) —— */
+.authority-flow-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.authority-flow-node__handle {
+  width: 7px !important;
+  height: 7px !important;
+  border: none !important;
+  background: rgba(56, 189, 248, 0.65) !important;
+  opacity: 0.85;
+}
+
+.authority-flow-node__handle:hover {
+  opacity: 1;
+  background: rgba(97, 218, 251, 0.95) !important;
+}
+
+.authority-flow-node__chrome {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(30, 41, 59, 0.92);
+  box-shadow:
+    0 2px 12px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.react-flow__node-authority:hover .authority-flow-node__chrome,
+.react-flow__node-authority.selected .authority-flow-node__chrome {
+  border-color: rgba(97, 218, 251, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(97, 218, 251, 0.2),
+    0 4px 20px rgba(97, 218, 251, 0.08);
+}
+
+.authority-flow-node__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 8px 4px 10px;
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+}
+
+.authority-flow-node__id {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(97, 218, 251, 0.85);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.authority-flow-node__avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.authority-flow-node__avatar--fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #38bdf8;
+  background: linear-gradient(145deg, #1e293b, #0f172a);
+}
+
+.authority-flow-node__body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.authority-flow-node__line1 {
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: #f1f5f9;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.authority-flow-node__line2 {
+  font-size: 10px;
+  line-height: 1.25;
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.authority-flow-node__role {
+  font-size: 9px;
+  line-height: 1.35;
+  color: rgba(203, 213, 225, 0.88);
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 1px;
+}
