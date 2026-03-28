@@ -224,7 +224,12 @@ pub fn movement_order_violates_land(
             if mask.is_land(*center_lat_deg, *center_lon_deg) {
                 return Some("Orbit center is on land.".into());
             }
-            let r = (*radius_m).clamp(crate::movement::MIN_ORBIT_RADIUS_M, crate::movement::MAX_ORBIT_RADIUS_M);
+            let r = radius_m
+                .clamp(
+                    crate::units::distance::ORBIT_RADIUS_MIN,
+                    crate::units::distance::ORBIT_RADIUS_MAX,
+                )
+                .raw();
             for k in 0..ORBIT_RIM_SAMPLES {
                 let azi = (k as f64) * (360.0 / ORBIT_RIM_SAMPLES as f64);
                 let (rlat, rlon) =

@@ -18,6 +18,7 @@ use tokio::time::{self, Duration};
 
 mod dto;
 mod earth;
+mod units;
 mod ecs;
 mod domain;
 mod movement;
@@ -40,12 +41,15 @@ use dto::{
     SpaceCoverageEventDto, SnapshotRequestDto, StopSessionDto, ScenarioSummaryDto,
 };
 use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
+use units::altitude::{hae_meters_to_distance_meter, Altitude, Hae, InternationalFootUnit, MeterUnit};
+use units::distance::Meter;
 
 #[derive(Debug, Clone, Deserialize)]
 struct TransformWorld {
     lat_deg: f64,
     lon_deg: f64,
-    /// WGS84 height above ellipsoid (international feet).
+    /// WGS84 height above ellipsoid (international feet). Logical type:
+    /// `units::altitude::Altitude<units::altitude::Hae, units::altitude::InternationalFootUnit>`.
     hae_ft: f64,
     heading_deg: f64,
 }
@@ -197,8 +201,8 @@ struct EntityState {
     /// None = no movement component; unit does not integrate and cannot be ordered.
     movement: Option<MovementConfig>,
     movement_mode: movement::MovementMode,
-    /// Total geodesic path length (m) when a movement order was applied; drives `station_progress`.
-    movement_path_total_m: Option<f64>,
+    /// Total geodesic path length when a movement order was applied; drives `station_progress`.
+    movement_path_total_m: Option<Meter>,
     symbol: SymbolConfig,
     /// TLE / SGP4 propagation (no surface movement integration).
     space: Option<space::SpaceOrbitRuntime>,
@@ -250,7 +254,7 @@ impl ObjectiveTracker {
     }
 }
 
-pub fn evaluate_team_objectives(
+pub(crate) fn evaluate_team_objectives(
     trackers: &mut [ObjectiveTracker],
     world: &[EntityState],
     sim_elapsed_s: f64,
@@ -333,9 +337,13 @@ fn collect_satellite_rows(world: &[EntityState]) -> Vec<(String, f64, f64, f64)>
         .filter_map(|e| {
             let sp = e.space.as_ref()?;
             let fr = space::footprint_radius_m(
-                earth::feet_to_meters(e.transform.hae_ft),
+                hae_meters_to_distance_meter(
+                    Altitude::<Hae, InternationalFootUnit>::from_wire_feet(e.transform.hae_ft)
+                        .to_hae_meters(),
+                ),
                 sp.config.fov_half_angle_deg,
-            );
+            )
+            .raw();
             Some((e.id.clone(), e.transform.lat_deg, e.transform.lon_deg, fr))
         })
         .collect()
@@ -357,7 +365,9 @@ fn propagate_space_entities(world: &mut [EntityState], t: DateTime<Utc>) {
         if let Ok((lat, lon, hae_m, snap)) = space::propagate_and_snapshot(sp, t) {
             e.transform.lat_deg = lat;
             e.transform.lon_deg = lon;
-            e.transform.hae_ft = earth::meters_to_feet(hae_m);
+            e.transform.hae_ft = Altitude::<Hae, MeterUnit>::from_hae_meters(hae_m)
+                .to_wire_feet()
+                .raw();
             e.space_overlay = Some(snap);
         }
     }
@@ -560,7 +570,7 @@ fn station_phase_from_order(order: &MovementOrderDto) -> Result<movement::Statio
             Ok(movement::StationPhase::Orbit {
                 center_lat_deg: *center_lat_deg,
                 center_lon_deg: *center_lon_deg,
-                radius_m: r,
+                radius_m: Meter::from_raw_meters(r),
                 clockwise: *clockwise,
             })
         }
@@ -585,16 +595,11 @@ fn station_phase_from_order(order: &MovementOrderDto) -> Result<movement::Statio
                 *point_a_lon_deg,
                 *point_b_lat_deg,
                 *point_b_lon_deg,
-                r,
+                Meter::from_raw_meters(r),
                 *racetrack_clockwise,
             );
             Ok(movement::StationPhase::Racetrack {
-                end_a_lat: *point_a_lat_deg,
-                end_a_lon: *point_a_lon_deg,
-                end_b_lat: *point_b_lat_deg,
-                end_b_lon: *point_b_lon_deg,
-                turn_radius_m: r,
-                clockwise: *racetrack_clockwise,
+                turn_radius_m: Meter::from_raw_meters(r),
                 loop_path_deg,
             })
         }
@@ -1089,7 +1094,7 @@ fn spawn_game_loop(
                     };
                     
                     if !game_over_emitted {
-                        let mut guard = world.lock().await;
+                        let guard = world.lock().await;
                         let blue_wins = evaluate_team_objectives(&mut objectives_blue, &guard, sim_end_elapsed_s);
                         let red_wins = evaluate_team_objectives(&mut objectives_red, &guard, sim_end_elapsed_s);
                         if blue_wins || red_wins {

@@ -6,6 +6,8 @@
 use geographiclib_rs::{Geodesic, DirectGeodesic, InverseGeodesic};
 use std::sync::OnceLock;
 
+use crate::units::distance::INTERNATIONAL_FOOT_IN_METERS;
+
 fn wgs84() -> &'static Geodesic {
     static G: OnceLock<Geodesic> = OnceLock::new();
     G.get_or_init(Geodesic::wgs84)
@@ -17,7 +19,7 @@ pub const WGS84_A_M: f64 = 6378137.0;
 /// International foot in meters (exact definition). Used to convert WGS84 HAE between ft (wire format) and m (physics / Cesium).
 ///
 /// Keep in sync with `client/src/units/length.js` (`METERS_PER_INTERNATIONAL_FOOT`).
-pub const METERS_PER_INTERNATIONAL_FOOT: f64 = 0.3048;
+pub const METERS_PER_INTERNATIONAL_FOOT: f64 = INTERNATIONAL_FOOT_IN_METERS;
 
 #[inline]
 pub fn feet_to_meters(ft: f64) -> f64 {
@@ -168,10 +170,7 @@ pub fn outward_navigation_heading_from_center(
 /// Stadium (capsule) racetrack on the ellipsoid: local ENU + geodesic vertex projection.
 pub mod racetrack_geometry {
     use super::{geodesic_azimuth_deg_1_to_2, geodesic_direct_deg, geodesic_distance_m};
-
-    /// Keep in sync with `crate::movement::MIN_ORBIT_RADIUS_M` / `MAX_ORBIT_RADIUS_M`.
-    const MIN_R_M: f64 = 75.0;
-    const MAX_R_M: f64 = 2_000_000.0;
+    use crate::units::distance::{Meter, ORBIT_RADIUS_MAX, ORBIT_RADIUS_MIN};
     const MIN_STRAIGHT_M: f64 = 80.0;
     const ARC_STEPS: usize = 18;
     const STRAIGHT_STEPS: usize = 12;
@@ -227,25 +226,26 @@ pub mod racetrack_geometry {
         a_lon: f64,
         b_lat: f64,
         b_lon: f64,
-        mut r_m: f64,
+        mut r_m: Meter,
         clockwise: bool,
     ) -> Vec<(f64, f64)> {
         let d_ab = geodesic_distance_m(a_lat, a_lon, b_lat, b_lon);
         let azi_ab = geodesic_azimuth_deg_1_to_2(a_lat, a_lon, b_lat, b_lon);
         let azi_ba = geodesic_azimuth_deg_1_to_2(b_lat, b_lon, a_lat, a_lon);
 
-        r_m = r_m.clamp(MIN_R_M, MAX_R_M);
+        r_m = r_m.clamp(ORBIT_RADIUS_MIN, ORBIT_RADIUS_MAX);
+        let r = r_m.raw();
 
-        if d_ab < 2.0 * r_m + MIN_STRAIGHT_M {
-            let r2 = ((d_ab - MIN_STRAIGHT_M) / 2.0).clamp(MIN_R_M, r_m);
-            if d_ab < 2.0 * MIN_R_M + 20.0 {
+        if d_ab < 2.0 * r + MIN_STRAIGHT_M {
+            let r2 = Meter::new(((d_ab - MIN_STRAIGHT_M) / 2.0).clamp(ORBIT_RADIUS_MIN.raw(), r));
+            if d_ab < 2.0 * ORBIT_RADIUS_MIN.raw() + 20.0 {
                 return sample_geodesic_two_way(a_lat, a_lon, b_lat, b_lon, 8);
             }
             return build_stadium_racetrack(a_lat, a_lon, b_lat, b_lon, r2, clockwise);
         }
 
-        let (o_l_lat, o_l_lon) = geodesic_direct_deg(a_lat, a_lon, azi_ab, r_m);
-        let (o_r_lat, o_r_lon) = geodesic_direct_deg(b_lat, b_lon, azi_ba, r_m);
+        let (o_l_lat, o_l_lon) = geodesic_direct_deg(a_lat, a_lon, azi_ab, r);
+        let (o_r_lat, o_r_lon) = geodesic_direct_deg(b_lat, b_lon, azi_ba, r);
 
         let l_centers = geodesic_distance_m(o_l_lat, o_l_lon, o_r_lat, o_r_lon).max(20.0);
         let forward_azi = geodesic_azimuth_deg_1_to_2(o_l_lat, o_l_lon, o_r_lat, o_r_lon);
@@ -255,8 +255,8 @@ pub mod racetrack_geometry {
         for i in 0..=ARC_STEPS {
             let t = i as f64 / ARC_STEPS as f64;
             let phi = 1.5 * std::f64::consts::PI - std::f64::consts::PI * t;
-            let lx = r_m * phi.cos();
-            let ly = r_m * phi.sin();
+            let lx = r * phi.cos();
+            let ly = r * phi.sin();
             if clockwise {
                 local_pts.push((lx, -ly));
             } else {
@@ -267,7 +267,7 @@ pub mod racetrack_geometry {
         for i in 1..=STRAIGHT_STEPS {
             let t = i as f64 / STRAIGHT_STEPS as f64;
             let lx = t * l_centers;
-            let ly = r_m;
+            let ly = r;
             if clockwise {
                 local_pts.push((lx, -ly));
             } else {
@@ -278,8 +278,8 @@ pub mod racetrack_geometry {
         for i in 1..=ARC_STEPS {
             let t = i as f64 / ARC_STEPS as f64;
             let phi = std::f64::consts::FRAC_PI_2 - std::f64::consts::PI * t;
-            let lx = l_centers + r_m * phi.cos();
-            let ly = r_m * phi.sin();
+            let lx = l_centers + r * phi.cos();
+            let ly = r * phi.sin();
             if clockwise {
                 local_pts.push((lx, -ly));
             } else {
@@ -290,7 +290,7 @@ pub mod racetrack_geometry {
         for i in 1..=STRAIGHT_STEPS {
             let t = i as f64 / STRAIGHT_STEPS as f64;
             let lx = l_centers * (1.0 - t);
-            let ly = -r_m;
+            let ly = -r;
             if clockwise {
                 local_pts.push((lx, -ly));
             } else {
@@ -338,7 +338,7 @@ pub mod racetrack_geometry {
 
         #[test]
         fn stadium_loop_nonzero_length() {
-            let p = build_stadium_racetrack(35.0, -40.0, 35.05, -40.08, 5000.0, false);
+            let p = build_stadium_racetrack(35.0, -40.0, 35.05, -40.08, Meter::new(5000.0), false);
             assert!(p.len() > 10);
             let len = open_polyline_length_m(&p);
             assert!(len > 20_000.0, "len={}", len);

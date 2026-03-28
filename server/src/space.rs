@@ -7,6 +7,7 @@ use sgp4::{Constants, Elements};
 
 use crate::dto::{LatLonDegDto, SpaceCoverageEventDto, SpaceSnapshotDto};
 use crate::earth::{geodesic_azimuth_deg_1_to_2, geodesic_direct_deg, geodesic_distance_m};
+use crate::units::distance::Meter;
 use std::collections::HashSet;
 
 /// WGS84 equatorial radius (km), matching `satellite.js` `eciToGeodetic`.
@@ -127,26 +128,26 @@ fn footprint_geocentric_angle_rad(r_earth_m: f64, h_m: f64, cone_half_angle_rad:
 }
 
 /// Ground footprint radius (m) for a spherical Earth cap (matches map circle approximation).
-pub fn footprint_radius_m(hae_m: f64, fov_half_angle_deg: f64) -> f64 {
+pub fn footprint_radius_m(hae_m: Meter, fov_half_angle_deg: f64) -> Meter {
     let r = crate::earth::WGS84_A_M;
     let alpha = fov_half_angle_deg.to_radians();
-    let eta = footprint_geocentric_angle_rad(r, hae_m, alpha);
-    r * eta
+    let eta = footprint_geocentric_angle_rad(r, hae_m.raw(), alpha);
+    Meter::new(r * eta)
 }
 
 /// Great-circle distance (m) from subsatellite point to where the satellite is at the horizon.
 /// Spherical Earth: `Re * arccos(Re / (Re + h))` with `h` = HAE (m). This is the radius of the cap of
 /// Earth surface points that have line-of-sight to the satellite (elevation ≥ 0° at limb).
-pub fn ground_visibility_cap_radius_m(hae_m: f64) -> f64 {
+pub fn ground_visibility_cap_radius_m(hae_m: Meter) -> Meter {
     let re = crate::earth::WGS84_A_M;
-    let h = hae_m.max(0.0);
+    let h = hae_m.raw().max(0.0);
     let rs = re + h;
     if !rs.is_finite() || rs <= re {
-        return 0.0;
+        return Meter::new(0.0);
     }
     let cos_gamma = (re / rs).clamp(-1.0, 1.0);
     let gamma = cos_gamma.acos();
-    re * gamma
+    Meter::new(re * gamma)
 }
 
 pub fn propagate_lat_lon_hae(
@@ -219,7 +220,7 @@ pub fn field_of_regard_swath_polygon_deg(
     let mut right = Vec::with_capacity(n);
     for i in 0..n {
         let (lat, lon, hae) = track_lat_lon_hae[i];
-        let r = footprint_radius_m(hae, fov_half_angle_deg);
+        let r = footprint_radius_m(Meter::new(hae), fov_half_angle_deg).raw();
         if !r.is_finite() || r <= 0.0 {
             return Vec::new();
         }
@@ -356,8 +357,9 @@ pub fn build_space_snapshot(
     track_samples: usize,
 ) -> Result<SpaceSnapshotDto, String> {
     let (_lat, _lon, hae) = propagate_lat_lon_hae(runtime, t)?;
-    let fr = footprint_radius_m(hae, runtime.config.fov_half_angle_deg);
-    let visibility_cap_radius_m = ground_visibility_cap_radius_m(hae);
+    let hae_m = Meter::new(hae);
+    let fr = footprint_radius_m(hae_m, runtime.config.fov_half_angle_deg).raw();
+    let visibility_cap_radius_m = ground_visibility_cap_radius_m(hae_m).raw();
     let track_hae =
         sample_ground_track_lat_lon_hae(runtime, t, track_ahead_s, track_samples);
     let ground_track_deg: Vec<LatLonDegDto> = track_hae
@@ -424,7 +426,7 @@ mod tests {
 
     #[test]
     fn visibility_cap_radius_leo_order_of_magnitude() {
-        let r = ground_visibility_cap_radius_m(420_000.0);
+        let r = ground_visibility_cap_radius_m(Meter::new(420_000.0)).raw();
         assert!(
             (1_500_000.0..3_500_000.0).contains(&r),
             "expected ~2e6 m for ~420 km LEO, got {r}"
