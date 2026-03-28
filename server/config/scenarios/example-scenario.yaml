@@ -46,4 +46,125 @@ blue_entities:
     lon_deg: -77.0559
     hae_ft: 0.0
     heading_deg: 0.0
+# Command & control chain for the Authorities tab (notional; see JP 3-0).
+# Emblems: Wikimedia Commons (public domain U.S. government works).
 spawns: []
+authorities:
+  - id: us-joint-overview
+    title: U.S. joint command context (exercise)
+    notes: |
+      Constructed from joint operations doctrine (national direction, combatant command, joint force).
+      JP 3-0 describes how strategic direction flows to joint campaigns and operations.
+    jp_reference: JP 3-0, Ch. I — foundations of joint operations
+    children:
+      - id: nca
+        title: National Command Authority
+        role: Statutory authority for military force (10 U.S.C.; nuclear release constructs in JP 3-0)
+        jp_reference: JP 3-0; Title 10 U.S.C. §§ 113, 164
+        image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Seal_of_the_President_of_the_United_States.svg/200px-Seal_of_the_President_of_the_United_States.svg.png
+        children:
+          - id: potus
+            name: President of the United States
+            role: Commander in Chief
+            image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Seal_of_the_President_of_the_United_States.svg/200px-Seal_of_the_President_of_the_United_States.svg.png
+          - id: vp
+            name: Vice President of the United States
+            role: Statutory successor within NCA constructs
+            image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Seal_of_the_Vice_President_of_the_United_States.svg/200px-Seal_of_the_Vice_President_of_the_United_States.svg.png
+      - id: secdef
+        name: Secretary of Defense
+        role: Principal assistant to the President for military matters; exercises authority, direction, and control over the Department of Defense
+        jp_reference: JP 3-0 — OSD / SECDEF in chain of command to CCDRs
+        image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Seal_of_the_United_States_Department_of_Defense.svg/200px-Seal_of_the_United_States_Department_of_Defense.svg.png
+        children:
+          - id: depsecdef
+            title: Deputy Secretary of Defense
+            role: Principal deputy to SECDEF
+      - id: jcs
+        title: Joint Chiefs of Staff
+        role: Principal military advice to the President, NSC, and SECDEF (not a separate operational chain to combatant commands)
+        jp_reference: JP 3-0 — Chairman JCS; Joint Staff
+        image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/1/19/Joint_Chiefs_of_Staff_seal.svg/200px-Joint_Chiefs_of_Staff_seal.svg.png
+        children:
+          - id: cjcs
+            title: Chairman of the Joint Chiefs of Staff
+            role: Senior ranking member of the armed forces; principal military advisor
+          - id: vcjcs
+            title: Vice Chairman of the Joint Chiefs of Staff
+            role: Second highest-ranking member of the armed forces
+          - id: service-chiefs
+            title: Service Chiefs of Staff / Commandant
+            role: Chiefs of Army, Navy, Air Force, Marine Corps, Space Force, National Guard Bureau (as constituted)
+            children:
+              - id: cno
+                title: Chief of Naval Operations
+                role: Senior uniformed officer of the Navy; member of Joint Chiefs of Staff
+                image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/Emblem_of_the_United_States_Navy.svg/200px-Emblem_of_the_United_States_Navy.svg.png
+              - id: csa
+                title: Chief of Staff of the Army
+                role: Senior uniformed officer of the Army; member of Joint Chiefs of Staff
+              - id: csaf
+                title: Chief of Staff of the Air Force
+                role: Senior uniformed officer of the Air Force; member of Joint Chiefs of Staff
+              - id: cmc
+                title: Commandant of the Marine Corps
+                role: Senior uniformed officer of the Marine Corps; member of Joint Chiefs of Staff
+      - id: secnav-stack
+        title: Department of the Navy (administrative / service management)
+        role: Service secretary and Navy chain for manning, training, equipping (distinct from operational COCOM chain)
+        image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Seal_of_the_United_States_Department_of_the_Navy.svg/200px-Seal_of_the_United_States_Department_of_the_Navy.svg.png
+        children:
+          - id: secnav
+            name: Secretary of the Navy
+            role: Civilian head of Department of the Navy under SECDEF
+          - id: cno-under-secnav
+            title: Chief of Naval Operations (service capacity)
+            role: Navy service chief; operates within Title 10 administrative chain
+      - id: geographic-cocom
+        title: Geographic & functional combatant commands
+        role: Unified combatant commands plan and conduct military operations per Unified Command Plan
+        jp_reference: JP 3-0 — combatant commanders (CCDRs)
+        children:
+          - id: indopacom
+            title: U.S. Indo-Pacific Command (USINDOPACOM)
+            role: Geographic CCDR — Indo-Pacific
+          - id: eucom
+            title: U.S. European Command (USEUCOM)
+            role: Geographic CCDR — Europe
+          - id: centcom
+            title: U.S. Central Command (USCENTCOM)
+            role: Geographic CCDR — Middle East / Central Asia
+          - id: africa
+            title: U.S. Africa Command (USAFRICOM)
+            role: Geographic CCDR — Africa
+          - id: northcom
+            title: U.S. Northern Command (USNORTHCOM)
+            role: Geographic CCDR — North America homeland defense
+          - id: southcom
+            title: U.S. Southern Command (USSOUTHCOM)
+            role: Geographic CCDR — Central / South America & Caribbean
+          - id: stratcom
+            title: U.S. Strategic Command (USSTRATCOM)
+            role: Functional CCDR — strategic deterrence, space, cyber (as assigned)
+          - id: socom
+            title: U.S. Special Operations Command (USSOCOM)
+            role: Functional CCDR — special operations
+          - id: cybercom
+            title: U.S. Cyber Command (USCYBERCOM)
+            role: Functional CCDR — cyberspace operations (as constituted)
+          - id: spacecom
+            title: U.S. Space Command (USSPACECOM)
+            role: Functional CCDR — space operations
+      - id: joint-force-exercise
+        title: Joint force for this scenario
+        role: Joint task force / joint force headquarters under a combatant commander for the exercise
+        jp_reference: JP 3-0 — joint force commander (JFC); joint planning
+        children:
+          - id: jfc
+            name: Admiral (Joint Force Commander)
+            title: Joint Force Commander
+            role: Four-star Navy admiral — operational command of the joint force in this simulation
+            notes: |
+              Primary scenario authority: directs joint maritime / air components for the exercise.
+              Notional billet; replace with a named character when you flesh out the story.
+            image_url: https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/Emblem_of_the_United_States_Navy.svg/200px-Emblem_of_the_United_States_Navy.svg.png

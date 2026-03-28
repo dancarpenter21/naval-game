@@ -1,5 +1,6 @@
 //! Scenario definitions loaded from `config/scenarios/*.yaml`.
 
+use crate::dto::AuthorityNodeDto;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -98,6 +99,9 @@ pub struct ScenarioConfig {
     /// Explicit spawn counts. When non-empty, overrides red/blue entity lists for spawning.
     #[serde(default)]
     pub spawns: Vec<ScenarioSpawn>,
+    /// Optional command-and-control authority tree (rendered in the client Authorities tab).
+    #[serde(default)]
+    pub authorities: Vec<AuthorityNodeDto>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -492,5 +496,28 @@ spawns:
             config: ScenarioConfig::default(),
         };
         assert_eq!(s.display_name(), "North Atlantic Exercise");
+    }
+
+    #[test]
+    fn deserializes_authorities_nested() {
+        let yaml = r#"
+authorities:
+  - id: root
+    title: Root office
+    children:
+      - id: child
+        name: Child role
+        role: Example
+        image_url: https://example.com/x.png
+"#;
+        let cfg: ScenarioConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.authorities.len(), 1);
+        assert_eq!(cfg.authorities[0].id, "root");
+        assert_eq!(cfg.authorities[0].children.len(), 1);
+        assert_eq!(cfg.authorities[0].children[0].id, "child");
+        assert_eq!(
+            cfg.authorities[0].children[0].image_url.as_deref(),
+            Some("https://example.com/x.png")
+        );
     }
 }

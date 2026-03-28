@@ -33,11 +33,11 @@ use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
 use domain::{participant_to_dto, PlayerTeam, ScenarioSideEntity, ScenarioSummary, SessionPublic};
 use dto::{
-    ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto, IssueMovementOrderDto,
-    JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto, PlayersListRequestDto,
-    RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto, SetTimeScaleDto,
-    EntitySnapshotDto, HardpointMountSnapshotDto, LatLonDegDto, SpaceCoverageEventDto,
-    SnapshotRequestDto, StopSessionDto, ScenarioSummaryDto,
+    AuthorityNodeDto, ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto,
+    IssueMovementOrderDto, JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto,
+    PlayersListRequestDto, RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto,
+    SetTimeScaleDto, EntitySnapshotDto, HardpointMountSnapshotDto, LatLonDegDto,
+    SpaceCoverageEventDto, SnapshotRequestDto, StopSessionDto, ScenarioSummaryDto,
 };
 use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
 
@@ -607,6 +607,8 @@ struct GameSession {
     player_teams: HashMap<String, PlayerTeam>,
     /// Display name per socket (chat / player list).
     player_names: HashMap<String, String>,
+    /// C2 authority tree from the loaded scenario (sent to clients on create/join).
+    authorities: Vec<AuthorityNodeDto>,
     stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     _loop_handle: JoinHandle<()>,
     world: Arc<Mutex<Vec<EntityState>>>,
@@ -1223,10 +1225,12 @@ fn on_connect(
                 id: id.clone(),
                 name: session_name.clone(),
             };
+            let authorities = scenario.config.authorities.clone();
             let participant = participant_to_dto(
                 &public,
                 PlayerTeam::White,
                 display_name.clone(),
+                authorities.clone(),
             );
 
             let entities = spawn_initial_entities(&world_template, scenario);
@@ -1277,6 +1281,7 @@ fn on_connect(
                 public: public.clone(),
                 player_teams,
                 player_names,
+                authorities,
                 stop_tx: Some(stop_tx),
                 _loop_handle: loop_handle,
                 world: world_for_session,
@@ -1346,8 +1351,12 @@ fn on_connect(
                     .insert(sock_key.clone(), player_team);
                 session.player_names.insert(sock_key, display_name.clone());
                 socket.join(session_id.clone());
-                let participant =
-                    participant_to_dto(&session.public, player_team, display_name.clone());
+                let participant = participant_to_dto(
+                    &session.public,
+                    player_team,
+                    display_name.clone(),
+                    session.authorities.clone(),
+                );
                 let session_name_for_log = session.public.name.clone();
                 let players_dto = players_list_for_session(session);
                 drop(store_lock);

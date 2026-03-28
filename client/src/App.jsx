@@ -9,6 +9,7 @@ import SessionChatPanel from './components/SessionChatPanel';
 import SyncMatrixView from './components/SyncMatrixView';
 import PlanComparisonView from './components/PlanComparisonView';
 import SystemView from './components/SystemView';
+import AuthoritiesView from './components/AuthoritiesView';
 import SessionModal from './components/SessionModal';
 import './App.css';
 import { SIDC_HELP_HREF, SOCKET_PATH, SOCKET_URL } from './config';
@@ -339,6 +340,9 @@ function App() {
               onSelectedEntityIdChange={setMapSelectedEntityId}
             />
           </Suspense>
+        </Tab>
+        <Tab label="Authorities">
+          <AuthoritiesView authorities={session?.authorities} />
         </Tab>
         <Tab label="Sync Matrix">
           <SyncMatrixView

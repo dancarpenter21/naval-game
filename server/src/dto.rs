@@ -116,6 +116,28 @@ pub struct SessionPublicDto {
     pub name: String,
 }
 
+/// Command / control authority figure or office for the scenario (not the human players).
+/// Nested `children` form the chain from NCA through combatant command to joint force level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthorityNodeDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// Optional portrait or emblem URL (e.g. Wikimedia Commons); client falls back to initials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jp_reference: Option<String>,
+    #[serde(default)]
+    pub children: Vec<AuthorityNodeDto>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionParticipantDto {
     pub id: String,
@@ -123,6 +145,8 @@ pub struct SessionParticipantDto {
     pub player_team: PlayerTeamDto,
     /// Display name for this connection (OS user / env / client-provided).
     pub display_name: String,
+    #[serde(default)]
+    pub authorities: Vec<AuthorityNodeDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]

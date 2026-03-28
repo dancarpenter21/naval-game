@@ -1,6 +1,6 @@
 use crate::dto::{
-    PlayerTeamDto, ScenarioSideEntityDto, ScenarioSummaryDto, SessionParticipantDto,
-    SessionPublicDto,
+    AuthorityNodeDto, PlayerTeamDto, ScenarioSideEntityDto, ScenarioSummaryDto,
+    SessionParticipantDto, SessionPublicDto,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,12 +85,14 @@ pub fn participant_to_dto(
     public: &SessionPublic,
     player_team: PlayerTeam,
     display_name: String,
+    authorities: Vec<AuthorityNodeDto>,
 ) -> SessionParticipantDto {
     SessionParticipantDto {
         id: public.id.clone(),
         name: public.name.clone(),
         player_team: player_team.to_dto(),
         display_name,
+        authorities,
     }
 }
 
