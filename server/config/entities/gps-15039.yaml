@@ -1,0 +1,22 @@
+- id: gps-15039
+  name: NAVSTAR 9 (USA 1)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 15039U 84059A   26081.79738373  .00000019  00000+0  00000+0 0  9996"
+        line2: "2 15039  63.5199  66.7806 0241372  53.4813 123.5468  1.92302582296467"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

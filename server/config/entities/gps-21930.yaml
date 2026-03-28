@@ -1,0 +1,22 @@
+- id: gps-21930
+  name: NAVSTAR 25 (USA 80)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 21930U 92019A   26076.11558760 -.00000020  00000+0  00000+0 0  9991"
+        line2: "2 21930  55.0183 308.4363 0030277 347.2930 208.0751  1.87661396239726"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

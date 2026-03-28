@@ -1,0 +1,22 @@
+- id: gps-24320
+  name: NAVSTAR 39 (USA 128)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 24320U 96056A   26085.57275716  .00000014  00000+0  00000+0 0  9991"
+        line2: "2 24320  53.7531 239.6692 0030225 216.3207 153.1580  1.86498909208970"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

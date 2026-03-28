@@ -1,0 +1,22 @@
+- id: gps-21890
+  name: NAVSTAR 24 (USA 79)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 21890U 92009A   26084.57845493 -.00000016  00000+0  00000+0 0  9991"
+        line2: "2 21890  54.2192 169.2477 0053083  60.4291 302.2355  1.91828510244490"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

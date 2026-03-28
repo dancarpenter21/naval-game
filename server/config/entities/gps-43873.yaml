@@ -1,0 +1,22 @@
+- id: gps-43873
+  name: NAVSTAR 77 (USA 289)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 43873U 18109A   26087.26453723  .00000045  00000+0  00000+0 0  9996"
+        line2: "2 43873  55.6315  95.3771 0037867 198.7638 175.8510  2.00557717 53455"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

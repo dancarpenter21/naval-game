@@ -1,0 +1,22 @@
+- id: gps-24876
+  name: NAVSTAR 43 (USA 132)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 24876U 97035A   26086.93311049  .00000048  00000+0  00000+0 0  9993"
+        line2: "2 24876  55.9497 101.7503 0098698  56.1410 304.8437  2.00563890210322"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

@@ -1,0 +1,22 @@
+- id: gps-20533
+  name: NAVSTAR 19 (USA 54)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 20533U 90025A   26087.12168562 -.00000005  00000+0  00000+0 0  9997"
+        line2: "2 20533  53.5197 248.5615 0044684 224.9219 135.2014  1.91038695253470"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

@@ -1,0 +1,22 @@
+- id: gps-26605
+  name: NAVSTAR 49 (USA 154)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 26605U 00071A   26087.25324848  .00000047  00000+0  00000+0 0  9995"
+        line2: "2 26605  55.5784  98.1492 0173835 265.9145 183.0893  2.00569352185892"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

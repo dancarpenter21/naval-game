@@ -1,0 +1,22 @@
+- id: gps-64202
+  name: NAVSTAR 84 (USA 545)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 64202U 25116A   26086.81565740 -.00000073  00000+0  00000+0 0  9996"
+        line2: "2 64202  55.1836  34.4049 0008950 330.7522  26.0721  2.00551427  6237"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

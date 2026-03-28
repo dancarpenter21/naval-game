@@ -1,6 +1,6 @@
 //! Scenario definitions loaded from `config/scenarios/*.yaml`.
 
-use crate::dto::AuthorityNodeDto;
+use crate::dto::{AuthorityNodeDto, SymbolScenarioPatch};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -28,6 +28,9 @@ pub enum ScenarioEntityRef {
         /// Per-mount loadout: mount id → entity template id (must be allowed by the template hardpoint).
         #[serde(default)]
         hardpoints: Option<HashMap<String, String>>,
+        /// Merged over the entity template `symbol` component (scenario wins per field).
+        #[serde(default)]
+        symbol: Option<SymbolScenarioPatch>,
     },
 }
 
@@ -402,6 +405,7 @@ blue_entities:
                 hae_ft: None,
                 heading_deg: Some(45.0),
                 hardpoints: None,
+                symbol: None,
             }]
         );
         assert_eq!(
@@ -413,6 +417,46 @@ blue_entities:
                 hae_ft: None,
                 heading_deg: None,
                 hardpoints: None,
+                symbol: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn deserializes_entity_placement_with_symbol_patch() {
+        use crate::dto::{CesiumShapeDto, SymbolScenarioPatch};
+
+        let yaml = r##"
+blue_entities:
+  - id: frigate
+    lat_deg: 1.0
+    symbol:
+      map_icon_image_url: icons/mark.png
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 10.0
+        color: "#00ff88"
+"##;
+        let cfg: ScenarioConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.blue_entities,
+            vec![ScenarioEntityRef::Placement {
+                id: "frigate".into(),
+                lat_deg: Some(1.0),
+                lon_deg: None,
+                hae_ft: None,
+                heading_deg: None,
+                hardpoints: None,
+                symbol: Some(SymbolScenarioPatch {
+                    sidc_template: None,
+                    map_icon_glb_override: None,
+                    map_icon_glb_url: None,
+                    map_icon_image_url: Some("icons/mark.png".into()),
+                    map_cesium_shape: Some(CesiumShapeDto::Sphere {
+                        radius_px: 10.0,
+                        color: Some("#00ff88".into()),
+                    }),
+                }),
             }]
         );
     }
@@ -440,6 +484,7 @@ blue_entities:
                 hae_ft: None,
                 heading_deg: None,
                 hardpoints: Some(expected),
+                symbol: None,
             }]
         );
     }

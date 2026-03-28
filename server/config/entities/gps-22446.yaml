@@ -1,0 +1,22 @@
+- id: gps-22446
+  name: NAVSTAR 30 (USA 88)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 22446U 93007A   26087.48742588 -.00000013  00000+0  00000+0 0  9999"
+        line2: "2 22446  53.3168 245.9577 0027995  43.2529 138.9995  1.88094939232486"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

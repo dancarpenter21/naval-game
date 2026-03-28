@@ -2,6 +2,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::ecs::Allegiance;
 
+/// Simple Cesium primitive for map markers (see `MapView.jsx`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CesiumShapeDto {
+    /// Screen-space dot: `radius_px` is the nominal **radius** in CSS pixels; the client maps it to
+    /// Cesium `PointGraphics.pixelSize` ≈ `2 * radius_px` (diameter).
+    Sphere {
+        radius_px: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+    },
+    Box {
+        /// Half-extents in meters along local East–North–Up axes at the entity pose.
+        half_axes_m: [f64; 3],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+    },
+    Ellipsoid {
+        radii_m: [f64; 3],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+    },
+    Cylinder {
+        length_m: f64,
+        radius_m: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+    },
+}
+
+/// Partial symbol / map marker overrides for scenario `Placement` entries (merged over entity YAML).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct SymbolScenarioPatch {
+    #[serde(default)]
+    pub sidc_template: Option<crate::sidc::SidcTemplate>,
+    #[serde(default)]
+    pub map_icon_glb_override: Option<bool>,
+    #[serde(default)]
+    pub map_icon_glb_url: Option<String>,
+    #[serde(default)]
+    pub map_icon_image_url: Option<String>,
+    #[serde(default)]
+    pub map_cesium_shape: Option<CesiumShapeDto>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlayerTeamDto {
@@ -66,6 +111,12 @@ pub struct EntitySnapshotDto {
     /// Omitted unless the entity template has `map_icon_glb_override: true` and a URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub map_icon_glb_url: Option<String>,
+    /// Raster image under `client/public/` (or absolute URL). Used when no GLB override applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_icon_image_url: Option<String>,
+    /// Cesium box / sphere / ellipsoid / cylinder primitive instead of milsymbol or billboards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_cesium_shape: Option<CesiumShapeDto>,
     /// False if the entity has no `movement` component (cannot receive movement orders).
     pub movable: bool,
     /// When true, map does not draw a position marker (e.g. space assets).

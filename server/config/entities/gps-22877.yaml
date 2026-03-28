@@ -1,0 +1,22 @@
+- id: gps-22877
+  name: NAVSTAR 35 (USA 96)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 22877U 93068A   26085.30865875 -.00000096  00000+0  00000+0 0  9999"
+        line2: "2 22877  55.4625 340.2000 0007446 127.5141  40.0094  1.88540957234896"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

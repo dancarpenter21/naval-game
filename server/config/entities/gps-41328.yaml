@@ -1,0 +1,22 @@
+- id: gps-41328
+  name: NAVSTAR 76 (USA 266)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 41328U 16007A   26086.59699733  .00000040  00000+0  00000+0 0  9997"
+        line2: "2 41328  55.4719  92.6926 0095870 246.5777 112.4456  2.00555566 74202"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

@@ -7,7 +7,7 @@ import {
   zoomFromHeightMeters,
 } from '../map/mapViewCesiumHelpers';
 import { readMapViewMemory, writeMapViewMemory } from '../map/mapViewMemory';
-import { mapClickDebug } from '../utils/mapClickDebug';
+import { isMapCesiumMotionDebugEnabled, mapCesiumMotionDebug, mapClickDebug } from '../utils/mapClickDebug';
 import { haeFeetToMeters } from '../units/length';
 import MovementPlanningCesium from './MovementPlanningCesium';
 
@@ -40,6 +40,29 @@ function publicAssetUrl(relativePath) {
   const p = String(relativePath).replace(/^\/+/, '');
   const prefix = base.endsWith('/') ? base : `${base}/`;
   return `${prefix}${p}`;
+}
+
+/** Clear map marker primitives so we can switch between GLB / image / Cesium shape / milsymbol. */
+function stripUnitMarkerPrimitives(target) {
+  if (!target) return;
+  target.model = undefined;
+  target.billboard = undefined;
+  target.point = undefined;
+  target.box = undefined;
+  target.ellipsoid = undefined;
+  target.cylinder = undefined;
+}
+
+function mapShapeMaterial(shape, entity) {
+  const raw = shape && typeof shape.color === 'string' ? shape.color.trim() : '';
+  const hex =
+    raw ||
+    (String(entity.allegiance).toLowerCase() === 'hostile' ? '#ef4444' : '#0ea5e9');
+  try {
+    return Cesium.Color.fromCssColorString(hex).withAlpha(0.9);
+  } catch {
+    return Cesium.Color.CYAN.withAlpha(0.85);
+  }
 }
 
 /**
@@ -508,7 +531,17 @@ const MapView = ({
       );
 
       const glbPath = entity.map_icon_glb_url;
+      const imagePath = entity.map_icon_image_url;
+      const cesiumShape = entity.map_cesium_shape;
       const existing = viewer.entities.getById(uid);
+      if (Cesium.defined(existing)) {
+        existing.disableDepthTestDistance = undefined;
+      }
+      const shapeKindStr =
+        cesiumShape && typeof cesiumShape === 'object' && cesiumShape.kind != null
+          ? String(cesiumShape.kind).toLowerCase()
+          : '';
+      const wantsCesiumShape = ['sphere', 'box', 'ellipsoid', 'cylinder'].includes(shapeKindStr);
 
       if (glbPath) {
         const uri = publicAssetUrl(glbPath);
@@ -516,9 +549,10 @@ const MapView = ({
         if (Cesium.defined(existing)) {
           existing.position = new Cesium.ConstantPositionProperty(position);
           existing.orientation = new Cesium.ConstantProperty(orientation);
-          if (existing.billboard) {
-            existing.billboard = undefined;
-          }
+          existing.billboard = undefined;
+          existing.box = undefined;
+          existing.ellipsoid = undefined;
+          existing.cylinder = undefined;
           if (!existing.model) {
             existing.model = new Cesium.ModelGraphics({
               uri,
@@ -547,6 +581,119 @@ const MapView = ({
               silhouetteSize: selected ? 2.5 : 0,
             },
           });
+        }
+      } else if (imagePath) {
+        const uri = publicAssetUrl(imagePath);
+        const edge = selected ? 52 : 40;
+        const billboardOpts = {
+          image: uri,
+          width: edge,
+          height: edge,
+          scale: selected ? 1.08 : 1.0,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+        };
+        if (Cesium.defined(existing)) {
+          existing.position = new Cesium.ConstantPositionProperty(position);
+          existing.orientation = undefined;
+          stripUnitMarkerPrimitives(existing);
+          existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
+        } else {
+          viewer.entities.add({
+            id: uid,
+            position,
+            billboard: billboardOpts,
+          });
+        }
+      } else if (wantsCesiumShape) {
+        const mat = mapShapeMaterial(cesiumShape, entity);
+        const outlineCol = Cesium.Color.BLACK.withAlpha(0.35);
+        const addOrUpdateShape = (plainOpts, graphicsFactory) => {
+          if (Cesium.defined(existing)) {
+            existing.position = new Cesium.ConstantPositionProperty(position);
+            existing.orientation = new Cesium.ConstantProperty(orientation);
+            stripUnitMarkerPrimitives(existing);
+            if (graphicsFactory === 'ellipsoid') {
+              existing.ellipsoid = new Cesium.EllipsoidGraphics(plainOpts.ellipsoid);
+            } else if (graphicsFactory === 'box') {
+              existing.box = new Cesium.BoxGraphics(plainOpts.box);
+            } else {
+              existing.cylinder = new Cesium.CylinderGraphics(plainOpts.cylinder);
+            }
+          } else {
+            viewer.entities.add({
+              id: uid,
+              position,
+              orientation,
+              ...plainOpts,
+            });
+          }
+        };
+
+        if (shapeKindStr === 'sphere') {
+          // `radius_px` = half the on-screen diameter (Cesium PointGraphics.pixelSize ≈ diameter).
+          const rpx = Math.max(0.5, Number(cesiumShape.radius_px) || 6);
+          let pixelSize = Math.round(2 * rpx);
+          if (selected) pixelSize = Math.max(2, Math.round(pixelSize * 1.2));
+          const pt = {
+            pixelSize,
+            color: mat,
+            outlineColor: outlineCol,
+            outlineWidth: 1,
+          };
+          if (Cesium.defined(existing)) {
+            existing.position = new Cesium.ConstantPositionProperty(position);
+            existing.orientation = undefined;
+            stripUnitMarkerPrimitives(existing);
+            existing.point = new Cesium.PointGraphics(pt);
+          } else {
+            viewer.entities.add({
+              id: uid,
+              position,
+              point: pt,
+            });
+          }
+        } else if (shapeKindStr === 'box') {
+          const [hx, hy, hz] = cesiumShape.half_axes_m || [1, 1, 1];
+          const box = {
+            dimensions: new Cesium.Cartesian3(
+              2 * Math.max(hx, 0.5),
+              2 * Math.max(hy, 0.5),
+              2 * Math.max(hz, 0.5),
+            ),
+            fill: true,
+            material: mat,
+            outline: true,
+            outlineColor: outlineCol,
+          };
+          addOrUpdateShape({ box }, 'box');
+        } else if (shapeKindStr === 'ellipsoid') {
+          const [rx, ry, rz] = cesiumShape.radii_m || [1, 1, 1];
+          const ell = {
+            radii: new Cesium.Cartesian3(
+              Math.max(rx, 0.5),
+              Math.max(ry, 0.5),
+              Math.max(rz, 0.5),
+            ),
+            fill: true,
+            material: mat,
+            outline: true,
+            outlineColor: outlineCol,
+          };
+          addOrUpdateShape({ ellipsoid: ell }, 'ellipsoid');
+        } else if (shapeKindStr === 'cylinder') {
+          const len = Math.max(Number(cesiumShape.length_m) || 0, 1);
+          const rad = Math.max(Number(cesiumShape.radius_m) || 0, 0.5);
+          const cyl = {
+            length: len,
+            topRadius: rad,
+            bottomRadius: rad,
+            fill: true,
+            material: mat,
+            outline: true,
+            outlineColor: outlineCol,
+          };
+          addOrUpdateShape({ cylinder: cyl }, 'cylinder');
         }
       } else {
         let image;
@@ -584,17 +731,9 @@ const MapView = ({
 
         if (Cesium.defined(existing)) {
           existing.position = new Cesium.ConstantPositionProperty(position);
-          if (existing.model) {
-            existing.model = undefined;
-          }
-          if (existing.billboard) {
-            existing.billboard.image = new Cesium.ConstantProperty(image);
-            existing.billboard.width = new Cesium.ConstantProperty(width);
-            existing.billboard.height = new Cesium.ConstantProperty(height);
-            existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.12 : 1.0);
-          } else {
-            existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
-          }
+          existing.orientation = undefined;
+          stripUnitMarkerPrimitives(existing);
+          existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
         } else {
           viewer.entities.add({
             id: uid,
@@ -611,6 +750,25 @@ const MapView = ({
       /* viewer may be tearing down */
     }
   }, [viewer, entities, selectedEntityId]);
+
+  /** Optional: `localStorage naval_debug_map_cesium_motion=1` — logs Δlat/Δlon each ~1s (confirms server snapshots move Cesium-shape markers). */
+  const cesiumShapeMotionPrevRef = useRef(new Map());
+  const cesiumShapeMotionLogAtRef = useRef(0);
+  useEffect(() => {
+    if (!isMapCesiumMotionDebugEnabled()) return;
+    const now = Date.now();
+    const deltas = [];
+    for (const e of entities) {
+      if (!e?.map_cesium_shape) continue;
+      const p = cesiumShapeMotionPrevRef.current.get(e.id);
+      cesiumShapeMotionPrevRef.current.set(e.id, { lat: e.lat_deg, lon: e.lon_deg });
+      if (p) deltas.push({ id: e.id, dlat: e.lat_deg - p.lat, dlon: e.lon_deg - p.lon });
+    }
+    if (deltas.length && now - cesiumShapeMotionLogAtRef.current >= 1000) {
+      cesiumShapeMotionLogAtRef.current = now;
+      mapCesiumMotionDebug('Δlat/Δlon (deg) per world_snapshot tick', deltas.slice(0, 12));
+    }
+  }, [entities]);
 
   /** Authoritative planned path from the server (`display_path_deg`); cyan polyline. */
   useEffect(() => {
@@ -800,6 +958,23 @@ const MapView = ({
             {selectedEntity.movable && selectedEntity.movement_kind && (
               <div style={{ marginTop: 4, opacity: 0.88, fontSize: 11 }}>
                 Sim movement: <strong>{selectedEntity.movement_kind}</strong>
+              </div>
+            )}
+            {(selectedEntity.map_cesium_shape || selectedEntity.space) && (
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  opacity: 0.92,
+                  lineHeight: 1.35,
+                }}
+                title="From latest world_snapshot (server SGP4 for space units)"
+              >
+                <div>
+                  λ {selectedEntity.lon_deg.toFixed(5)}° φ {selectedEntity.lat_deg.toFixed(5)}°
+                </div>
+                <div>HAE {selectedEntity.hae_ft.toFixed(0)} ft (WGS84)</div>
               </div>
             )}
           </div>

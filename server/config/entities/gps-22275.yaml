@@ -1,0 +1,22 @@
+- id: gps-22275
+  name: NAVSTAR 29 (USA 87)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 22275U 92089A   26084.60048574  .00000014  00000+0  00000+0 0  9993"
+        line2: "2 22275  55.0017 131.2954 0073517  78.9466  88.3551  1.88246638235305"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

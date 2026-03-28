@@ -1,0 +1,22 @@
+- id: gps-26690
+  name: NAVSTAR 50 (USA 156)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 26690U 01004A   26086.99471612 -.00000075  00000+0  00000+0 0  9990"
+        line2: "2 26690  55.1621  35.7071 0003110   4.6841 180.6832  1.91587999181989"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

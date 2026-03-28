@@ -1,0 +1,22 @@
+- id: gps-36585
+  name: NAVSTAR 65 (USA 213)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 36585U 10022A   26085.94895900 -.00000019  00000+0  00000+0 0  9996"
+        line2: "2 36585  54.2840 211.8736 0127090  66.0041 119.7315  2.00558272115944"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

@@ -1,0 +1,22 @@
+- id: gps-34661
+  name: NAVSTAR 63 (USA 203)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 34661U 09014A   26086.78255058 -.00000029  00000+0  00000+0 0  9996"
+        line2: "2 34661  54.4992 213.9176 0144732  61.5080 299.0658  2.00555105124644"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

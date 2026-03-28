@@ -39,6 +39,11 @@ require_creds() {
   fi
 }
 
+# After load_env_file / require_creds — same UA on login + data calls (some stacks tie cookies to UA).
+st_user_agent() {
+  printf '%s' "${SPACE_TRACK_USER_AGENT:-naval-game space-track-pull (identity: ${SPACE_TRACK_IDENTITY})}"
+}
+
 require_python3() {
   command -v python3 >/dev/null 2>&1 || {
     echo "This command needs python3 (use Docker: utilities/space-track-pull/docker-run.sh …)." >&2
@@ -53,22 +58,38 @@ uri_segment_encode() {
 
 st_login() {
   require_creds
-  curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-    "$BASE/ajaxauth/login" \
-    -d "identity=${SPACE_TRACK_IDENTITY}&password=${SPACE_TRACK_PASSWORD}"
+  local body http
+  body="$(
+    curl -sS -w '\n%{http_code}' -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+      -A "$(st_user_agent)" \
+      -X POST "$BASE/ajaxauth/login" \
+      --data-urlencode "identity=${SPACE_TRACK_IDENTITY}" \
+      --data-urlencode "password=${SPACE_TRACK_PASSWORD}"
+  )"
+  http="${body##*$'\n'}"
+  body="${body%$'\n'*}"
+  if [[ "$http" != 2* ]]; then
+    echo "Login HTTP $http body: $body" >&2
+    exit 1
+  fi
+  if [[ -n "$body" ]] && echo "$body" | grep -qi 'Login.*Failed\|"error"'; then
+    echo "Login rejected by Space-Track: $body" >&2
+    exit 1
+  fi
   echo "" >&2
   echo "Login POST complete. Cookie jar: $COOKIE_JAR" >&2
 }
 
 st_logout() {
-  curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$BASE/ajaxauth/logout" >/dev/null || true
+  curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -A "$(st_user_agent)" "$BASE/ajaxauth/logout" >/dev/null || true
   echo "Logout sent." >&2
 }
 
 # GET with session cookie (path begins with /basicspacedata/...).
 st_get() {
   local path="$1"
-  curl -sS -g -b "$COOKIE_JAR" "${BASE}${path}"
+  # -c merges any Set-Cookie from the API into the jar (login alone is sometimes insufficient).
+  curl -sS -g -c "$COOKIE_JAR" -b "$COOKIE_JAR" -A "$(st_user_agent)" "${BASE}${path}"
 }
 
 # Login once before any data request (session cookie).
@@ -107,12 +128,28 @@ satcat_gps_bundle() {
   t2="$(mktemp "${TMPDIR:-/tmp}/st-satcat2.XXXXXX")"
   satcat_active_prefix NAVSTAR >"$t1"
   satcat_active_prefix GPS >"$t2"
-  python3 -c '
+  python3 - "$t1" "$t2" <<'PY'
 import json, sys
+
+def rows(x):
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict):
+        if "error" in x:
+            raise SystemExit("space-track error: " + json.dumps(x, indent=2))
+        v = x.get("value")
+        if isinstance(v, list):
+            return v
+        if x.get("NORAD_CAT_ID") is not None or x.get("OBJECT_NAME") is not None:
+            return [x]
+        if x.get("TLE_LINE1") is not None or x.get("GP_ID") is not None:
+            return [x]
+    return []
+
 with open(sys.argv[1]) as f:
-    a = json.load(f)
+    a = rows(json.load(f))
 with open(sys.argv[2]) as f:
-    b = json.load(f)
+    b = rows(json.load(f))
 seen = set()
 out = []
 for row in a + b:
@@ -122,7 +159,7 @@ for row in a + b:
     seen.add(k)
     out.append(row)
 print(json.dumps(out))
-' "$t1" "$t2"
+PY
   rm -f "$t1" "$t2"
 }
 
@@ -167,14 +204,30 @@ gp_json_ids_chunked() {
     rm -rf "$tmpd"
     return
   fi
-  python3 -c '
+  python3 - "$tmpd" <<'PY'
 import glob, json, sys
+
+def rows(x):
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict):
+        if "error" in x:
+            raise SystemExit("space-track error: " + json.dumps(x, indent=2))
+        v = x.get("value")
+        if isinstance(v, list):
+            return v
+        if x.get("NORAD_CAT_ID") is not None or x.get("OBJECT_NAME") is not None:
+            return [x]
+        if x.get("TLE_LINE1") is not None or x.get("GP_ID") is not None:
+            return [x]
+    return []
+
 acc = []
 for path in sorted(glob.glob(sys.argv[1] + "/p*.json")):
     with open(path) as f:
-        acc.extend(json.load(f))
+        acc.extend(rows(json.load(f)))
 print(json.dumps(acc))
-' "$tmpd"
+PY
   rm -rf "$tmpd"
 }
 
@@ -182,12 +235,28 @@ merge_satcat_gp() {
   require_python3
   local satcat_json="$1"
   local gp_json="$2"
-  python3 -c '
+  python3 - "$satcat_json" "$gp_json" <<'PY'
 import json, sys
+
+def rows(x):
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict):
+        if "error" in x:
+            raise SystemExit("space-track error: " + json.dumps(x, indent=2))
+        v = x.get("value")
+        if isinstance(v, list):
+            return v
+        if x.get("NORAD_CAT_ID") is not None or x.get("OBJECT_NAME") is not None:
+            return [x]
+        if x.get("TLE_LINE1") is not None or x.get("GP_ID") is not None:
+            return [x]
+    return []
+
 with open(sys.argv[1]) as f:
-    satcat = json.load(f)
+    satcat = rows(json.load(f))
 with open(sys.argv[2]) as f:
-    gp = json.load(f)
+    gp = rows(json.load(f))
 gp_by_id = {}
 for row in gp:
     k = row.get("NORAD_CAT_ID")
@@ -201,7 +270,7 @@ for row in satcat:
     copy["gp"] = gp_by_id.get(str(nid)) if nid is not None else None
     out.append(copy)
 print(json.dumps(out))
-' "$satcat_json" "$gp_json"
+PY
 }
 
 usage() {
@@ -287,12 +356,29 @@ case "$cmd" in
     trap 'rm -rf "$tmpd"' EXIT
     echo "Fetching SATCAT (GPS)…" >&2
     satcat_gps_bundle >"$tmpd/satcat.json"
-    ids="$(python3 -c '
+    ids="$(python3 - "$tmpd/satcat.json" <<'PY'
 import json, sys
+
+def rows(x):
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict):
+        if "error" in x:
+            raise SystemExit("space-track error: " + json.dumps(x, indent=2))
+        v = x.get("value")
+        if isinstance(v, list):
+            return v
+        if x.get("NORAD_CAT_ID") is not None or x.get("OBJECT_NAME") is not None:
+            return [x]
+        if x.get("TLE_LINE1") is not None or x.get("GP_ID") is not None:
+            return [x]
+    return []
+
 with open(sys.argv[1]) as f:
-    d = json.load(f)
+    d = rows(json.load(f))
 print(",".join(str(x["NORAD_CAT_ID"]) for x in d))
-' "$tmpd/satcat.json")"
+PY
+)"
     if [[ -z "$ids" || "$ids" == "null" ]]; then
       echo "No NORAD IDs from satcat-gps." >&2
       exit 1

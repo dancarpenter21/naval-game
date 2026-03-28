@@ -1,0 +1,22 @@
+- id: gps-20061
+  name: NAVSTAR 14 (USA 38)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 20061U 89044A   26085.76660127  .00000012  00000+0  00000+0 0  9991"
+        line2: "2 20061  53.3489 242.7027 0026239 206.9868 152.4672  1.88858229260228"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

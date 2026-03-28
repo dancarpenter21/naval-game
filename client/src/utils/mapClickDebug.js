@@ -20,3 +20,26 @@ export function mapClickDebug(...args) {
     c.log('[naval:map-clicks]', ...args);
   }
 }
+
+/**
+ * Logs when entities with `map_cesium_shape` change position (server snapshots).
+ * Enable: `localStorage.setItem('naval_debug_map_cesium_motion', '1')` then reload.
+ */
+export function isMapCesiumMotionDebugEnabled() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('naval_debug_map_cesium_motion') === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** @param {...unknown} args */
+export function mapCesiumMotionDebug(...args) {
+  if (!isMapCesiumMotionDebugEnabled()) return;
+  const c = globalThis.console;
+  if (typeof c?.debug === 'function') {
+    c.debug('[naval:map-cesium-motion]', ...args);
+  } else if (typeof c?.log === 'function') {
+    c.log('[naval:map-cesium-motion]', ...args);
+  }
+}

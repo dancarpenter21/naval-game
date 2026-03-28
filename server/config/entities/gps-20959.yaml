@@ -1,0 +1,22 @@
+- id: gps-20959
+  name: NAVSTAR 22 (USA 66)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 20959U 90103A   26086.85540357 -.00000028  00000+0  00000+0 0  9996"
+        line2: "2 20959  56.1339  54.4559 0021935  86.8253 273.4116  1.88155168254332"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

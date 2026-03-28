@@ -1,0 +1,22 @@
+- id: gps-20452
+  name: NAVSTAR 18 (USA 50)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 20452U 90008A   26082.84219896  .00000020  00000+0  00000+0 0  9995"
+        line2: "2 20452  54.8405 136.6356 0015860 280.8576  81.6617  1.89597733254818"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

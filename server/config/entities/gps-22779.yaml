@@ -1,0 +1,22 @@
+- id: gps-22779
+  name: NAVSTAR 34 (USA 94)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 22779U 93054A   26087.11639893 -.00000031  00000+0  00000+0 0  9994"
+        line2: "2 22779  53.3206 220.7201 0051247 251.9643 106.5165  1.89129669234487"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

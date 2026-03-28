@@ -1,0 +1,22 @@
+- id: gps-32384
+  name: NAVSTAR 61 (USA 199)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 32384U 07062A   26087.26503117  .00000001  00000+0  00000+0 0  9992"
+        line2: "2 32384  55.0970 277.4035 0033697 161.1024 190.8547  2.00554962133889"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

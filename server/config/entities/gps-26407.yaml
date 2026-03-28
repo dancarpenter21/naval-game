@@ -1,0 +1,22 @@
+- id: gps-26407
+  name: NAVSTAR 48 (USA 151)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 26407U 00040A   26087.53223389 -.00000034  00000+0  00000+0 0  9997"
+        line2: "2 26407  54.8698 218.3638 0122224 302.5125  64.7596  2.00569122188330"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

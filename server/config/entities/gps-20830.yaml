@@ -1,0 +1,22 @@
+- id: gps-20830
+  name: NAVSTAR 21 (USA 64)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 20830U 90088A   26086.75781942 -.00000110  00000+0  00000+0 0  9994"
+        line2: "2 20830  56.4430  12.6564 0024092 291.8583 293.1775  1.87752565251271"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

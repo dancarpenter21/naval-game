@@ -1,0 +1,22 @@
+- id: gps-16129
+  name: NAVSTAR 11 (USA 10)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 16129U 85093A   26085.62998733  .00000060  00000+0  00000+0 0  9996"
+        line2: "2 16129  63.5124  86.8922 0339502  55.6335 152.7922  1.89368708227735"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

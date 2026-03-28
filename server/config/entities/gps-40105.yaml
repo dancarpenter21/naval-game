@@ -1,0 +1,22 @@
+- id: gps-40105
+  name: NAVSTAR 71 (USA 256)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 40105U 14045A   26087.28045228  .00000041  00000+0  00000+0 0  9991"
+        line2: "2 40105  55.2984  91.6865 0031373 119.9438 240.4029  2.00553016 84456"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

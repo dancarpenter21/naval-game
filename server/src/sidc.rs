@@ -642,7 +642,7 @@ impl<'de> Deserialize<'de> for ModifierCode {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SidcTemplate {
     #[serde(default = "default_version")]
     pub version: String,

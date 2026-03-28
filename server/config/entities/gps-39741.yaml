@@ -1,0 +1,22 @@
+- id: gps-39741
+  name: NAVSTAR 70 (USA 251)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 39741U 14026A   26087.19137726 -.00000084  00000+0  00000+0 0  9997"
+        line2: "2 39741  56.5350 334.6726 0039518 325.7470  34.0420  2.00566868 86913"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

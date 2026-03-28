@@ -11,6 +11,30 @@ export const HardpointMountSchema = z.object({
   carried_entity_id: z.string().optional().nullable(),
 });
 
+export const CesiumShapeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('sphere'),
+    radius_px: z.number(),
+    color: z.string().optional().nullable(),
+  }),
+  z.object({
+    kind: z.literal('box'),
+    half_axes_m: z.tuple([z.number(), z.number(), z.number()]),
+    color: z.string().optional().nullable(),
+  }),
+  z.object({
+    kind: z.literal('ellipsoid'),
+    radii_m: z.tuple([z.number(), z.number(), z.number()]),
+    color: z.string().optional().nullable(),
+  }),
+  z.object({
+    kind: z.literal('cylinder'),
+    length_m: z.number(),
+    radius_m: z.number(),
+    color: z.string().optional().nullable(),
+  }),
+]);
+
 export const SpaceSnapshotSchema = z.object({
   line1: z.string(),
   line2: z.string(),
@@ -34,6 +58,9 @@ export const EntityDtoSchema = z.object({
   sidc: z.string(),
   /** When set, MapView uses this GLB URL (under `public/`) instead of milsymbol for the globe marker. */
   map_icon_glb_url: z.string().optional().nullable(),
+  /** PNG/SVG/JPEG etc. under `public/` (or absolute URL). Used when GLB is absent. */
+  map_icon_image_url: z.string().optional().nullable(),
+  map_cesium_shape: CesiumShapeSchema.optional().nullable(),
   movable: z.boolean().optional(),
   hide_map_marker: z.boolean().optional(),
   space: SpaceSnapshotSchema.optional().nullable(),

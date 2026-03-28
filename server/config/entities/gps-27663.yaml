@@ -1,0 +1,22 @@
+- id: gps-27663
+  name: NAVSTAR 51 (USA 166)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 27663U 03005A   26087.08268548 -.00000029  00000+0  00000+0 0  9996"
+        line2: "2 27663  54.9010 218.1895 0148530  52.8576 125.4188  2.00564876169680"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

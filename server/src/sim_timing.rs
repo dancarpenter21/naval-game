@@ -109,9 +109,15 @@ impl SimTimingState {
 
     /// Exercise clock in UTC for UI (scenario start aligned to session creation time).
     pub fn sim_time_rfc3339(&self) -> String {
+        self.sim_time_utc()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
+    /// Current simulated instant (session start + elapsed sim seconds).
+    pub fn sim_time_utc(&self) -> DateTime<Utc> {
         let delta = std::time::Duration::from_secs_f64(self.sim_elapsed_s);
         let ch = ChronoDuration::from_std(delta).unwrap_or_else(|_| ChronoDuration::zero());
-        (self.session_start_utc + ch).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        self.session_start_utc + ch
     }
 
     pub fn to_world_snapshot(

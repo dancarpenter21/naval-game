@@ -1,0 +1,22 @@
+- id: gps-29601
+  name: NAVSTAR 59 (USA 192)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 29601U 06052A   26087.14688671 -.00000030  00000+0  00000+0 0  9997"
+        line2: "2 29601  54.9512 217.2168 0087307  89.8109 271.1536  2.00553180141783"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

@@ -1,0 +1,443 @@
+name: "Example: GPS constellation (satcom test)"
+description: |
+  Spawns NAVSTAR payloads listed in scratch/gps-raw.json as friendly space entities.
+  TLE line1/line2 come from CelesTrak (gps-ops group plus per-NORAD fills for older blocks).
+  Map: each unit uses a blue screen-space dot (`symbol.map_cesium_shape`: sphere, `radius_px` in pixels).
+  Re-run utilities/generate-scenario-example-gps.py to refresh orbits (keeps this map styling).
+win_conditions: |
+  None — use for satcom / visibility experiments. End the session from the host when finished.
+red_entities: []
+blue_entities:
+  - id: gps-15039
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-15271
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-16129
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-19802
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20061
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20185
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20302
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20361
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20452
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20533
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20724
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20830
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-20959
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-21552
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-21890
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-21930
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22014
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22108
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22231
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22275
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22446
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22581
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22657
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22700
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22779
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-22877
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-23027
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-23833
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-23953
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-24320
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-24876
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-25030
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-25933
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-26360
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-26407
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-26605
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-26690
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-27663
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-27704
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-28129
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-28190
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-28361
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-28474
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-28874
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-29486
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-29601
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-32260
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-32384
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-32711
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-34661
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-35752
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-36585
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-37753
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-38833
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-39166
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-39533
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-39741
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-40105
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-40294
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-40534
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-40730
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-41019
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-41328
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-43873
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-44506
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-45854
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-46826
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-48859
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-55268
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-62339
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-64202
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+  - id: gps-67588
+    symbol:
+      map_cesium_shape:
+        kind: sphere
+        radius_px: 8
+        color: '#2563eb'
+spawns: []

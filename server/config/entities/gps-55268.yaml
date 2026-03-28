@@ -1,0 +1,22 @@
+- id: gps-55268
+  name: NAVSTAR 82 (USA 343)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 55268U 23009A   26087.18378093  .00000000  00000+0  00000+0 0  9990"
+        line2: "2 55268  55.1104 151.7031 0005380 326.6502  28.0595  2.00547447 23616"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

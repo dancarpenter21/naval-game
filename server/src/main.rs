@@ -34,10 +34,10 @@ use scenario::{load_scenarios_from_dir, LoadedScenario, ScenarioEntityRef};
 use sidc::{sidc_with_status, status_from_sidc, Sidc, SidcTemplate, Status};
 use domain::{participant_to_dto, PlayerTeam, ScenarioSideEntity, ScenarioSummary, SessionPublic};
 use dto::{
-    AuthorityNodeDto, ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto, ErrorDto,
-    IssueMovementOrderDto, JoinSessionDto, LeaveSessionDto, MovementOrderDto, PlayersListDto,
-    PlayersListRequestDto, RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto,
-    SetTimeScaleDto, EntitySnapshotDto, HardpointMountSnapshotDto, LatLonDegDto,
+    AuthorityNodeDto, CesiumShapeDto, ChatMessageDto, ChatScopeDto, ChatSendDto, CreateSessionDto,
+    EntitySnapshotDto, ErrorDto, HardpointMountSnapshotDto, IssueMovementOrderDto, JoinSessionDto,
+    LatLonDegDto, LeaveSessionDto, MovementOrderDto, PlayersListDto, PlayersListRequestDto,
+    RoomPlayerDto, ScenariosListDto, SessionPublicDto, SessionsListDto, SetTimeScaleDto,
     SpaceCoverageEventDto, SnapshotRequestDto, StopSessionDto, ScenarioSummaryDto,
 };
 use sim_timing::{SimTimingState, SimWallClockConfig, KNOTS_TO_MPS, MAX_SIM_SUBSTEP_S};
@@ -144,6 +144,10 @@ struct SymbolConfig {
     map_icon_glb_override: bool,
     /// Client map: load this glTF/GLB URL instead of a milsymbol billboard (path under `client/public/`).
     map_icon_glb_url: Option<String>,
+    /// Raster image path/URL for Cesium billboard (after GLB in priority).
+    map_icon_image_url: Option<String>,
+    /// Cesium primitive marker (after image in priority).
+    map_cesium_shape: Option<CesiumShapeDto>,
 }
 
 /// YAML shape: `{ sidc_template: { ... } }` (not an externally tagged enum key like `Template:`).
@@ -154,6 +158,10 @@ struct SymbolConfigWire {
     map_icon_glb_override: bool,
     #[serde(default)]
     map_icon_glb_url: Option<String>,
+    #[serde(default)]
+    map_icon_image_url: Option<String>,
+    #[serde(default)]
+    map_cesium_shape: Option<CesiumShapeDto>,
 }
 
 impl<'de> Deserialize<'de> for SymbolConfig {
@@ -183,13 +191,54 @@ impl<'de> Deserialize<'de> for SymbolConfig {
                     Some(t.to_string())
                 }
             });
+        let map_icon_image_url = wire.map_icon_image_url.and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        });
 
         Ok(SymbolConfig {
             sidc,
             map_icon_glb_override: wire.map_icon_glb_override,
             map_icon_glb_url,
+            map_icon_image_url,
+            map_cesium_shape: wire.map_cesium_shape,
         })
     }
+}
+
+fn trim_string_field(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+/// Map marker precedence: GLB (when override + URL) → image URL → Cesium shape → milsymbol.
+fn entity_snapshot_map_visual(
+    sym: &SymbolConfig,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<CesiumShapeDto>,
+) {
+    if sym.map_icon_glb_override {
+        if let Some(ref u) = sym.map_icon_glb_url {
+            return (Some(u.clone()), None, None);
+        }
+    }
+    if let Some(ref u) = sym.map_icon_image_url {
+        return (None, Some(u.clone()), None);
+    }
+    if let Some(ref sh) = sym.map_cesium_shape {
+        return (None, None, Some(sh.clone()));
+    }
+    (None, None, None)
 }
 
 #[derive(Debug, Clone)]
@@ -424,6 +473,8 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                     )
                 }
             });
+            let (map_icon_glb_url, map_icon_image_url, map_cesium_shape) =
+                entity_snapshot_map_visual(&s.symbol);
             EntitySnapshotDto {
                 id: s.id.clone(),
                 name: s.name.clone(),
@@ -433,11 +484,9 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
                 hae_ft: s.transform.hae_ft,
                 heading_deg: s.transform.heading_deg,
                 sidc: s.symbol.sidc.clone(),
-                map_icon_glb_url: if s.symbol.map_icon_glb_override {
-                    s.symbol.map_icon_glb_url.clone()
-                } else {
-                    None
-                },
+                map_icon_glb_url,
+                map_icon_image_url,
+                map_cesium_shape,
                 movable: s.movement.is_some(),
                 hide_map_marker: s.hide_map_marker,
                 station_eta_sim_s,
@@ -840,6 +889,45 @@ fn apply_scenario_hardpoint_loadout(
     }
 }
 
+fn apply_scenario_symbol_patch(entity: &mut EntityState, entry: &ScenarioEntityRef) {
+    let ScenarioEntityRef::Placement { symbol, .. } = entry else {
+        return;
+    };
+    let Some(patch) = symbol else {
+        return;
+    };
+    if let Some(t) = &patch.sidc_template {
+        match t.to_sidc_string() {
+            Ok(s) => {
+                if Sidc::parse(&s).is_some() {
+                    entity.symbol.sidc = s;
+                } else {
+                    warn!(
+                        "Scenario symbol: SIDC failed validation for entity {}",
+                        entity.id
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Scenario symbol: invalid sidc_template for entity {}: {}",
+                entity.id, e
+            ),
+        }
+    }
+    if let Some(v) = patch.map_icon_glb_override {
+        entity.symbol.map_icon_glb_override = v;
+    }
+    if let Some(v) = &patch.map_icon_glb_url {
+        entity.symbol.map_icon_glb_url = trim_string_field(v);
+    }
+    if let Some(v) = &patch.map_icon_image_url {
+        entity.symbol.map_icon_image_url = trim_string_field(v);
+    }
+    if let Some(v) = &patch.map_cesium_shape {
+        entity.symbol.map_cesium_shape = Some(v.clone());
+    }
+}
+
 fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScenario) -> Vec<EntityState> {
     let spawns = &scenario.config.spawns;
     let red = &scenario.config.red_entities;
@@ -884,6 +972,7 @@ fn spawn_initial_entities(world_template: &WorldTemplate, scenario: &LoadedScena
             apply_scenario_transform_overrides(&mut transform, entry);
             let mut entity = entity_state_from_template(entity_template, instance_id, transform);
             apply_scenario_hardpoint_loadout(&mut entity, entry, world_template);
+            apply_scenario_symbol_patch(&mut entity, entry);
             validate_hardpoints_against_world(world_template, entity.hardpoints.as_ref());
             entities.push(entity);
         }
@@ -1256,6 +1345,14 @@ fn on_connect(
             let wall_dt_s = sim_wall_create.dt_s;
             let wall_tick = Duration::from_secs_f64(wall_dt_s);
             let timing = Arc::new(Mutex::new(SimTimingState::new_now(wall_dt_s)));
+            {
+                let sim_t = {
+                    let t = timing.lock().await;
+                    t.sim_time_utc()
+                };
+                let mut guard = world.lock().await;
+                propagate_space_entities(&mut guard, sim_t);
+            }
             let mut obs_b = Vec::new();
             let mut obs_r = Vec::new();
             if let Some(ref objs) = scenario.config.objectives {
@@ -1381,7 +1478,12 @@ fn on_connect(
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
                     let snapshots = {
-                        let guard = session.world.lock().await;
+                        let mut guard = session.world.lock().await;
+                        let sim_t = {
+                            let t = session.timing.lock().await;
+                            t.sim_time_utc()
+                        };
+                        propagate_space_entities(&mut guard, sim_t);
                         entity_snapshots_from_world(&guard)
                     };
                     let dto = {
@@ -1402,7 +1504,12 @@ fn on_connect(
                 let store_lock = store.lock().await;
                 if let Some(session) = store_lock.get(&data.id) {
                     let snapshots = {
-                        let guard = session.world.lock().await;
+                        let mut guard = session.world.lock().await;
+                        let sim_t = {
+                            let t = session.timing.lock().await;
+                            t.sim_time_utc()
+                        };
+                        propagate_space_entities(&mut guard, sim_t);
                         entity_snapshots_from_world(&guard)
                     };
                     let dto = {

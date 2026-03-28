@@ -1,0 +1,22 @@
+- id: gps-25933
+  name: NAVSTAR 46 (USA 145)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 25933U 99055A   26087.25475471 -.00000033  00000+0  00000+0 0  9993"
+        line2: "2 25933  51.5365 299.0078 0106382 172.3117 351.4415  2.00566407193956"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

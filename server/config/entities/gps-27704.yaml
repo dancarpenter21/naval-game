@@ -1,0 +1,22 @@
+- id: gps-27704
+  name: NAVSTAR 52 (USA 168)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 27704U 03010A   26085.69410974 -.00000077  00000+0  00000+0 0  9998"
+        line2: "2 27704  54.8610 328.2680 0004355 348.6904  21.0754  1.94742947168311"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

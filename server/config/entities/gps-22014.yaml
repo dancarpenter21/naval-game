@@ -1,0 +1,22 @@
+- id: gps-22014
+  name: NAVSTAR 26 (USA 83)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 22014U 92039A   26086.62701643  .00000038  00000+0  00000+0 0  9992"
+        line2: "2 22014  55.4949 122.4710 0006617 284.8615  75.1336  1.87911749 73729"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

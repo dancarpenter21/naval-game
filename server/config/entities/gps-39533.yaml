@@ -1,0 +1,22 @@
+- id: gps-39533
+  name: NAVSTAR 69 (USA 248)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 39533U 14008A   26087.41311887 -.00000002  00000+0  00000+0 0  9993"
+        line2: "2 39533  53.6397 152.6153 0083084 229.1635 130.1722  2.00554546 88061"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

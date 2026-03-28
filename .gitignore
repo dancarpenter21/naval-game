@@ -51,3 +51,4 @@ server/debug/
 # --- Project-specific ---
 .docker-config/
 .space-track-cookies.txt
+scratch/

@@ -9,6 +9,11 @@
         fov_half_angle_deg: 2.5
     - kind: symbol
       data:
+        # Optional on-map display (see scenario `symbol:` patch): GLB → image URL → Cesium shape → milsymbol.
+        # map_icon_glb_override: true
+        # map_icon_glb_url: models/asset.glb
+        # map_icon_image_url: icons/mark.png
+        # map_cesium_shape: { kind: sphere, radius_px: 8, color: "#88aaff" }
         # APP-6 Space (05): Satellite (110700); modifier 1 = LEO (ISS is low Earth orbit).
         sidc_template:
           version: "10"

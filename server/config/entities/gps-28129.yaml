@@ -1,0 +1,22 @@
+- id: gps-28129
+  name: NAVSTAR 53 (USA 175)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 28129U 03058A   26087.08652556 -.00000094  00000+0  00000+0 0  9990"
+        line2: "2 28129  54.9811  26.2697 0003083 319.2827  40.6827  1.92678402162904"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

@@ -1,0 +1,22 @@
+- id: gps-23833
+  name: NAVSTAR 37 (USA 117)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 23833U 96019A   26086.49276521  .00000006  00000+0  00000+0 0  9996"
+        line2: "2 23833  52.8797 268.4269 0008730  26.0321 150.3085  1.94619590 81171"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

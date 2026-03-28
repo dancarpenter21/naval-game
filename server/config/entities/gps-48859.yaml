@@ -1,0 +1,22 @@
+- id: gps-48859
+  name: NAVSTAR 81 (USA 319)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 48859U 21054A   26085.92660022 -.00000086  00000+0  00000+0 0  9997"
+        line2: "2 48859  55.2106 335.7679 0023834 231.2619 258.6260  2.00573998 35100"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00

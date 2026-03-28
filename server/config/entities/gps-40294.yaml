@@ -1,0 +1,22 @@
+- id: gps-40294
+  name: NAVSTAR 72 (USA 258)
+  allegiance: friendly
+  components:
+    - kind: space_orbit
+      data:
+        line1: "1 40294U 14068A   26086.65813022 -.00000070  00000+0  00000+0 0  9993"
+        line2: "2 40294  56.9354  34.0960 0063895  68.2397 292.4250  2.00571381 83575"
+        fov_half_angle_deg: 5.0
+    - kind: symbol
+      data:
+        sidc_template:
+          version: "10"
+          context: reality
+          standard_identity: friend
+          symbol_set: space
+          status: present
+          hqtfd: not_applicable
+          amplifier: unspecified
+          entity: code_110700
+          modifier_one: code_02
+          modifier_two: code_00
