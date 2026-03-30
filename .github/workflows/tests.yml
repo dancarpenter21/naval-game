@@ -2,10 +2,11 @@
 name: Tests (Docker)
 
 on:
-  # All branch pushes (feature branches get CI before a PR exists).
-  push:
-    branches: ['**']
+  # PRs targeting main (open + each push to the PR branch). Not on every feature-branch push.
   pull_request:
+    branches: [main]
+  # Merges / direct pushes to main still get a check.
+  push:
     branches: [main]
 
 concurrency:

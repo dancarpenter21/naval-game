@@ -44,6 +44,142 @@ function removePreviewEntities(viewer) {
   toRemove.forEach((e) => viewer.entities.remove(e));
 }
 
+/** Avoid tearing down/recreating preview primitives every frame (world_snapshot gives new entity refs). */
+const PREVIEW_NO_DEPTH = Number.POSITIVE_INFINITY;
+
+function applyPreviewEntityDefaults(entity) {
+  if (Cesium.defined(entity)) {
+    entity.disableDepthTestDistance = PREVIEW_NO_DEPTH;
+  }
+}
+
+function cartesianArrayPositionsEqual(a, b, epsilon = 1e-5) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!Cesium.Cartesian3.equalsEpsilon(a[i], b[i], epsilon)) return false;
+  }
+  return true;
+}
+
+/**
+ * Update or create a polyline; hide when `show` is false without removing (reduces flicker).
+ */
+function setOrUpdatePreviewPolyline(viewer, id, positions, show, polylineOpts) {
+  const ec = viewer.entities;
+  const ent = ec.getById(id);
+  if (!show || !positions) {
+    if (Cesium.defined(ent)) ent.show = false;
+    return;
+  }
+  if (!Cesium.defined(ent)) {
+    ec.add({
+      id,
+      disableDepthTestDistance: PREVIEW_NO_DEPTH,
+      polyline: {
+        positions,
+        arcType: Cesium.ArcType.GEODESIC,
+        ...polylineOpts,
+      },
+    });
+    return;
+  }
+  applyPreviewEntityDefaults(ent);
+  ent.show = true;
+  if (!ent.polyline) {
+    ent.polyline = new Cesium.PolylineGraphics({
+      positions,
+      arcType: Cesium.ArcType.GEODESIC,
+      ...polylineOpts,
+    });
+    return;
+  }
+  const t = viewer.clock?.currentTime ?? Cesium.JulianDate.now();
+  const prev = ent.polyline.positions?.getValue(t);
+  if (prev && cartesianArrayPositionsEqual(prev, positions)) {
+    return;
+  }
+  ent.polyline.positions = new Cesium.ConstantProperty(positions);
+}
+
+function syncPreviewWaypointMarkers(viewer, planWaypoints, planHaeM) {
+  const ec = viewer.entities;
+  const n = planWaypoints.length;
+  ec.values.forEach((e) => {
+    const sid = e.id != null ? String(e.id) : '';
+    const m = sid.match(/^preview-wp-(\d+)$/);
+    if (m && Number(m[1]) >= n) ec.remove(e);
+  });
+  const h = Number.isFinite(planHaeM) ? planHaeM : 0;
+  for (let i = 0; i < n; i++) {
+    const w = planWaypoints[i];
+    const pos = Cesium.Cartesian3.fromDegrees(w.lng, w.lat, h);
+    const id = `preview-wp-${i}`;
+    let ent = ec.getById(id);
+    if (!Cesium.defined(ent)) {
+      ec.add({
+        id,
+        position: pos,
+        disableDepthTestDistance: PREVIEW_NO_DEPTH,
+        point: new Cesium.PointGraphics({
+          pixelSize: greenWaypoint.pixelSize,
+          color: greenWaypoint.color,
+          outlineColor: greenWaypoint.outlineColor,
+          outlineWidth: greenWaypoint.outlineWidth,
+        }),
+      });
+    } else {
+      applyPreviewEntityDefaults(ent);
+      ent.position = new Cesium.ConstantPositionProperty(pos);
+      ent.show = true;
+      if (!ent.point) {
+        ent.point = new Cesium.PointGraphics({
+          pixelSize: greenWaypoint.pixelSize,
+          color: greenWaypoint.color,
+          outlineColor: greenWaypoint.outlineColor,
+          outlineWidth: greenWaypoint.outlineWidth,
+        });
+      }
+    }
+  }
+}
+
+function setOrUpdatePreviewEllipse(viewer, id, centerDeg, planHaeM, semiMajorM, semiMinorM, ellipseOpts) {
+  const ec = viewer.entities;
+  const ent = ec.getById(id);
+  const show = Boolean(centerDeg) && semiMajorM > 0 && semiMinorM > 0;
+  if (!show) {
+    if (Cesium.defined(ent)) ent.show = false;
+    return;
+  }
+  const pos = Cesium.Cartesian3.fromDegrees(centerDeg.lng, centerDeg.lat, planHaeM);
+  if (!Cesium.defined(ent)) {
+    ec.add({
+      id,
+      position: pos,
+      disableDepthTestDistance: PREVIEW_NO_DEPTH,
+      ellipse: new Cesium.EllipseGraphics({
+        semiMajorAxis: semiMajorM,
+        semiMinorAxis: semiMinorM,
+        ...ellipseOpts,
+      }),
+    });
+    return;
+  }
+  applyPreviewEntityDefaults(ent);
+  ent.show = true;
+  ent.position = new Cesium.ConstantPositionProperty(pos);
+  if (!ent.ellipse) {
+    ent.ellipse = new Cesium.EllipseGraphics({
+      semiMajorAxis: semiMajorM,
+      semiMinorAxis: semiMinorM,
+      ...ellipseOpts,
+    });
+  } else {
+    ent.ellipse.semiMajorAxis = new Cesium.ConstantProperty(semiMajorM);
+    ent.ellipse.semiMinorAxis = new Cesium.ConstantProperty(semiMinorM);
+  }
+}
+
 /** @param {[number, number][]} latLonPairs — [lat, lon]; @param haeM WGS84 height (m) for Cesium. */
 function llToPositionsWithHae(latLonPairs, haeM) {
   const h = Number.isFinite(haeM) ? haeM : 0;
@@ -80,6 +216,7 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
   const lastEdgeRef = useRef(null);
   const planWaypointsRef = useRef(planWaypoints);
   const racetrackRef = useRef(racetrackDraft);
+  const viewerRef = useRef(null);
   const [orbitPreview, setOrbitPreview] = useState(null);
   const [racetrackRadiusPreview, setRacetrackRadiusPreview] = useState(null);
   const originalCameraControllerFlagsRef = useRef(null);
@@ -87,6 +224,13 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
   const rightMouseDownRef = useRef(false);
   /** Pointer id when O/R station planning captured the canvas (so pointerup fires reliably after drag). */
   const stationPointerIdRef = useRef(null);
+
+  /** Snapshot geometry only — avoids preview effect re-running every tick when `selectedEntity` is a new object ref from world_snapshot. */
+  const selId = selectedEntity?.id ?? null;
+  const selLat = selectedEntity?.lat_deg;
+  const selLon = selectedEntity?.lon_deg;
+  const selHaeFt = selectedEntity?.hae_ft;
+  const selHeadingDeg = selectedEntity?.heading_deg ?? 0;
 
   useImperativeHandle(
     ref,
@@ -112,6 +256,23 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
   useEffect(() => {
     racetrackRef.current = racetrackDraft;
   }, [racetrackDraft]);
+  useEffect(() => {
+    viewerRef.current = viewer;
+  }, [viewer]);
+
+  useEffect(
+    () => () => {
+      const v = viewerRef.current;
+      if (v) {
+        try {
+          removePreviewEntities(v);
+        } catch {
+          /* viewer may be destroyed */
+        }
+      }
+    },
+    [],
+  );
 
   const canPlan = Boolean(sessionId && socket && selectedEntity?.id && selectedEntity?.movable);
   const stationModifierActive = (oHeld && !rHeld) || (rHeld && !oHeld);
@@ -511,44 +672,44 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
   ]);
 
   const pathPositions = useMemo(() => {
-    if (!selectedEntity) return [];
-    const pts = [[selectedEntity.lat_deg, selectedEntity.lon_deg]];
+    if (selId == null || selLat == null || selLon == null) return [];
+    const pts = [[selLat, selLon]];
     for (const w of planWaypoints) {
       pts.push([w.lat, w.lng]);
     }
     return pts;
-  }, [selectedEntity, planWaypoints]);
+  }, [selId, selLat, selLon, planWaypoints]);
 
   const orbitApproachSegment = useMemo(() => {
-    if (!orbitPreview?.center || !orbitPreview?.edge || !selectedEntity) return null;
+    if (!orbitPreview?.center || !orbitPreview?.edge || selId == null) return null;
+    if (selLat == null || selLon == null) return null;
     const lastLat =
       planWaypoints.length > 0
         ? planWaypoints[planWaypoints.length - 1].lat
-        : selectedEntity.lat_deg;
+        : selLat;
     const lastLon =
       planWaypoints.length > 0
         ? planWaypoints[planWaypoints.length - 1].lng
-        : selectedEntity.lon_deg;
+        : selLon;
     const r = geodesicDistanceM(
       orbitPreview.center.lat,
       orbitPreview.center.lng,
       orbitPreview.edge.lat,
       orbitPreview.edge.lng,
     );
-    const hdg = selectedEntity.heading_deg ?? 0;
     const join = geodesicPointTowardFromCenter(
       orbitPreview.center.lat,
       orbitPreview.center.lng,
       lastLat,
       lastLon,
       r,
-      hdg,
+      selHeadingDeg,
     );
     return [
       [lastLat, lastLon],
       [join.latDeg, join.lonDeg],
     ];
-  }, [orbitPreview, planWaypoints, selectedEntity]);
+  }, [orbitPreview, planWaypoints, selId, selLat, selLon, selHeadingDeg]);
 
   const racetrackLine = useMemo(
     () =>
@@ -563,56 +724,40 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
 
   useEffect(() => {
     if (!viewer) return;
-    removePreviewEntities(viewer);
-
-    const planHaeM = haeFeetToMeters(selectedEntity?.hae_ft);
-
-    for (let i = 0; i < planWaypoints.length; i++) {
-      const w = planWaypoints[i];
-      viewer.entities.add({
-        id: `preview-wp-${i}`,
-        position: Cesium.Cartesian3.fromDegrees(w.lng, w.lat, planHaeM),
-        point: {
-          pixelSize: greenWaypoint.pixelSize,
-          color: greenWaypoint.color,
-          outlineColor: greenWaypoint.outlineColor,
-          outlineWidth: greenWaypoint.outlineWidth,
-        },
-      });
+    if (selId == null) {
+      removePreviewEntities(viewer);
+      try {
+        viewer.scene.requestRender?.();
+      } catch {
+        /* ignore */
+      }
+      return;
     }
 
-    if (pathPositions.length >= 2) {
-      viewer.entities.add({
-        id: 'preview-path',
-        polyline: {
-          positions: llToPositionsWithHae(pathPositions, planHaeM),
-          width: 3,
-          material: greenLine.color,
-        },
-      });
-    }
+    const planHaeM = haeFeetToMeters(selHaeFt);
 
-    if (orbitApproachSegment) {
-      viewer.entities.add({
-        id: 'preview-orbit-approach',
-        polyline: {
-          positions: llToPositionsWithHae(orbitApproachSegment, planHaeM),
-          width: 2,
-          material: Cesium.Color.CYAN.withAlpha(0.7),
-        },
-      });
-    }
+    syncPreviewWaypointMarkers(viewer, planWaypoints, planHaeM);
 
-    if (racetrackLine) {
-      viewer.entities.add({
-        id: 'preview-racetrack-ab',
-        polyline: {
-          positions: llToPositionsWithHae(racetrackLine, planHaeM),
-          width: 2,
-          material: Cesium.Color.LIME.withAlpha(0.85),
-        },
-      });
-    }
+    const greenPathPositions =
+      pathPositions.length >= 2 ? llToPositionsWithHae(pathPositions, planHaeM) : null;
+    setOrUpdatePreviewPolyline(viewer, 'preview-path', greenPathPositions, Boolean(greenPathPositions), {
+      width: greenLine.width,
+      material: new Cesium.ColorMaterialProperty(greenLine.color),
+    });
+
+    const orbitSegPos = orbitApproachSegment
+      ? llToPositionsWithHae(orbitApproachSegment, planHaeM)
+      : null;
+    setOrUpdatePreviewPolyline(viewer, 'preview-orbit-approach', orbitSegPos, Boolean(orbitSegPos), {
+      width: 2,
+      material: new Cesium.ColorMaterialProperty(Cesium.Color.CYAN.withAlpha(0.7)),
+    });
+
+    const rtSegPos = racetrackLine ? llToPositionsWithHae(racetrackLine, planHaeM) : null;
+    setOrUpdatePreviewPolyline(viewer, 'preview-racetrack-ab', rtSegPos, Boolean(rtSegPos), {
+      width: 2,
+      material: new Cesium.ColorMaterialProperty(Cesium.Color.LIME.withAlpha(0.85)),
+    });
 
     if (orbitPreview?.center && orbitPreview?.edge) {
       const r = Math.max(
@@ -624,19 +769,16 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
         ),
         1,
       );
-      viewer.entities.add({
-        id: 'preview-orbit-circle',
-        position: Cesium.Cartesian3.fromDegrees(orbitPreview.center.lng, orbitPreview.center.lat, planHaeM),
-        ellipse: {
-          semiMajorAxis: r,
-          semiMinorAxis: r,
-          material: Cesium.Color.LIME.withAlpha(0.12),
-          outline: true,
-          outlineColor: Cesium.Color.LIME,
-          outlineWidth: 2,
-          height: 0,
-        },
+      setOrUpdatePreviewEllipse(viewer, 'preview-orbit-circle', orbitPreview.center, planHaeM, r, r, {
+        material: new Cesium.ColorMaterialProperty(Cesium.Color.LIME.withAlpha(0.12)),
+        outline: true,
+        outlineColor: Cesium.Color.LIME,
+        outlineWidth: 2,
+        height: 0,
       });
+    } else {
+      const oe = viewer.entities.getById('preview-orbit-circle');
+      if (Cesium.defined(oe)) oe.show = false;
     }
 
     if (racetrackRadiusPreview?.center && racetrackRadiusPreview?.edge) {
@@ -649,35 +791,38 @@ const MovementPlanningCesium = forwardRef(function MovementPlanningCesium(
         ),
         1,
       );
-      viewer.entities.add({
-        id: 'preview-racetrack-circle',
-        position: Cesium.Cartesian3.fromDegrees(
-          racetrackRadiusPreview.center.lng,
-          racetrackRadiusPreview.center.lat,
-          planHaeM,
-        ),
-        ellipse: {
-          semiMajorAxis: r,
-          semiMinorAxis: r,
-          material: Cesium.Color.MEDIUMSPRINGGREEN.withAlpha(0.1),
+      setOrUpdatePreviewEllipse(
+        viewer,
+        'preview-racetrack-circle',
+        racetrackRadiusPreview.center,
+        planHaeM,
+        r,
+        r,
+        {
+          material: new Cesium.ColorMaterialProperty(Cesium.Color.MEDIUMSPRINGGREEN.withAlpha(0.1)),
           outline: true,
           outlineColor: Cesium.Color.MEDIUMSPRINGGREEN,
           outlineWidth: 2,
           height: 0,
         },
-      });
+      );
+    } else {
+      const re = viewer.entities.getById('preview-racetrack-circle');
+      if (Cesium.defined(re)) re.show = false;
     }
 
-    return () => {
-      try {
-        removePreviewEntities(viewer);
-      } catch {
-        /* viewer may already be destroyed */
-      }
-    };
+    try {
+      viewer.scene.requestRender?.();
+    } catch {
+      /* ignore */
+    }
   }, [
     viewer,
-    selectedEntity,
+    selId,
+    selLat,
+    selLon,
+    selHaeFt,
+    selHeadingDeg,
     planWaypoints,
     pathPositions,
     orbitApproachSegment,
