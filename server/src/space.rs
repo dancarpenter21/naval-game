@@ -1,6 +1,12 @@
 //! TLE / SGP4 propagation and satellite footprint geometry (space assets).
 //!
 //! Position uses the same ECI→geodetic path as `satellite.js` (`eciToGeodetic` + `gstime`).
+//!
+//! **Earth rotation:** SGP4 yields an inertial (TEME) state; [`propagate_lat_lon_hae`] applies
+//! Greenwich sidereal time so latitude/longitude are **Earth-fixed** (co-rotating with the globe).
+//! Coverage and LOS-style caps ([`ground_point_in_fov`], [`ground_visibility_cap_radius_m`]) compare
+//! those subsatellite/footprint quantities to terrestrial entities expressed in the same WGS84
+//! Earth-fixed frame (see [`crate::earth`] module docs).
 
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use sgp4::{Constants, Elements};
@@ -282,7 +288,8 @@ pub fn current_coverage_pairs(
     next
 }
 
-/// Whether `ground` (lat/lon, surface) lies inside the satellite nadir footprint (geodesic cap).
+/// Whether `ground` (lat/lon, Earth-fixed surface) lies inside the satellite nadir footprint
+/// (geodesic cap). Satellite arguments must be Earth-fixed subsatellite point for the same instant.
 pub fn ground_point_in_fov(
     sub_lat_deg: f64,
     sub_lon_deg: f64,

@@ -160,6 +160,8 @@ const MapView = ({
   socket,
   session,
   entities = [],
+  /** Server exercise clock; drives Cesium sun/lighting so the globe shows diurnal rotation vs the sun. */
+  simTiming = null,
   selectedEntityId: selectedEntityIdProp = null,
   onSelectedEntityIdChange,
 }) => {
@@ -310,6 +312,17 @@ const MapView = ({
         }),
       );
       v.scene.globe.show = true;
+      /**
+       * Cesium fades day/night shading out when the camera is “close” to Earth (between
+       * lightingFadeOutDistance and lightingFadeInDistance measured from the origin). Default
+       * values (~10–20 Mm) sit above our typical strategic camera (~6.4 Mm radius + ~2.5 Mm
+       * height), so fade stays 0 and Blue Marble stays uniformly bright. Pull the band down so
+       * Lambert shading vs the sun is always on; the texture stays fixed to the ellipsoid while
+       * the terminator moves as `viewer.clock` tracks sim UTC.
+       */
+      v.scene.globe.lightingFadeOutDistance = 0;
+      v.scene.globe.lightingFadeInDistance = 1;
+      v.scene.globe.dynamicAtmosphereLightingFromSun = true;
 
       const [lat0, lon0] = mapBootstrap.center;
       v.camera.setView({
@@ -343,6 +356,34 @@ const MapView = ({
     canvas.addEventListener('contextmenu', onCtx);
     return () => canvas.removeEventListener('contextmenu', onCtx);
   }, [viewer]);
+
+  /** Tie Cesium time to simulation UTC so sun direction moves with exercise clock (globe “revolves” vs sunlight). */
+  useEffect(() => {
+    if (!viewer) return;
+    const iso = simTiming?.sim_time_utc;
+    if (typeof iso === 'string' && iso.length > 0) {
+      try {
+        const jd = Cesium.JulianDate.fromIso8601(iso);
+        if (Cesium.defined(jd)) {
+          viewer.clock.currentTime = jd;
+        }
+      } catch {
+        /* ignore malformed server timestamps */
+      }
+    }
+    viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.lightingFadeOutDistance = 0;
+    viewer.scene.globe.lightingFadeInDistance = 1;
+    viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
+    if (viewer.scene.sun) {
+      viewer.scene.sun.show = true;
+    }
+    try {
+      viewer.scene.requestRender?.();
+    } catch {
+      /* viewer torn down */
+    }
+  }, [viewer, simTiming?.sim_time_utc]);
 
   useEffect(() => {
     if (!viewer || !outerRef.current) return undefined;
@@ -770,7 +811,11 @@ const MapView = ({
     }
   }, [entities]);
 
-  /** Authoritative planned path from the server (`display_path_deg`); cyan polyline. */
+  /**
+   * Selection overlays from the server:
+   * - `display_path_deg`: planned movement (cyan).
+   * - `space.ground_track_deg`: subsatellite track ahead in sim time (amber, geodesic on ellipsoid).
+   */
   useEffect(() => {
     if (!viewer) return;
 
@@ -778,7 +823,12 @@ const MapView = ({
       const toRemove = [];
       viewer.entities.values.forEach((e) => {
         const id = e.id != null ? String(e.id) : '';
-        if (id.startsWith('overlay-auth-path-')) toRemove.push(e);
+        if (
+          id.startsWith('overlay-auth-path-') ||
+          id.startsWith('overlay-sat-ground-track-')
+        ) {
+          toRemove.push(e);
+        }
       });
       toRemove.forEach((e) => viewer.entities.remove(e));
     };
@@ -795,8 +845,7 @@ const MapView = ({
     }
 
     const row = entities.find((e) => e.id === selectedEntityId);
-    const path = row?.display_path_deg;
-    if (!row || !path || path.length < 2) {
+    if (!row) {
       try {
         viewer.scene.requestRender?.();
       } catch {
@@ -805,21 +854,40 @@ const MapView = ({
       return;
     }
 
-    const haeM = haeFeetToMeters(row.hae_ft);
-    const h = Number.isFinite(haeM) ? haeM : 0;
-    const flat = [];
-    for (const p of path) {
-      flat.push(p.lon_deg, p.lat_deg, h);
+    const movementPath = row.display_path_deg;
+    if (movementPath && movementPath.length >= 2) {
+      const haeM = haeFeetToMeters(row.hae_ft);
+      const h = Number.isFinite(haeM) ? haeM : 0;
+      const flat = [];
+      for (const p of movementPath) {
+        flat.push(p.lon_deg, p.lat_deg, h);
+      }
+      viewer.entities.add({
+        id: `overlay-auth-path-${selectedEntityId}`,
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
+          width: 4,
+          material: Cesium.Color.CYAN.withAlpha(0.88),
+        },
+      });
     }
 
-    viewer.entities.add({
-      id: `overlay-auth-path-${selectedEntityId}`,
-      polyline: {
-        positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-        width: 4,
-        material: Cesium.Color.CYAN.withAlpha(0.88),
-      },
-    });
+    const groundTrack = row.space?.ground_track_deg;
+    if (groundTrack && groundTrack.length >= 2) {
+      const flatGround = [];
+      for (const p of groundTrack) {
+        flatGround.push(p.lon_deg, p.lat_deg, 0);
+      }
+      viewer.entities.add({
+        id: `overlay-sat-ground-track-${selectedEntityId}`,
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flatGround),
+          width: 3,
+          material: Cesium.Color.fromCssColorString('#f59e0b').withAlpha(0.9),
+          arcType: Cesium.ArcType.GEODESIC,
+        },
+      });
+    }
 
     try {
       viewer.scene.requestRender?.();
