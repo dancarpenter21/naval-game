@@ -380,6 +380,7 @@ fn on_session_closed_stub(_public: &SessionPublic) {
     // Intentionally left empty for now.
 }
 
+/// Earth-fixed subsatellite point + footprint radius per satellite (after `propagate_space_entities`).
 fn collect_satellite_rows(world: &[EntityState]) -> Vec<(String, f64, f64, f64)> {
     world
         .iter()
@@ -398,6 +399,7 @@ fn collect_satellite_rows(world: &[EntityState]) -> Vec<(String, f64, f64, f64)>
         .collect()
 }
 
+/// Earth-fixed surface/air positions (no `space` component) for satellite coverage / LOS caps.
 fn collect_ground_rows(world: &[EntityState]) -> Vec<(String, f64, f64)> {
     world
         .iter()
@@ -406,6 +408,7 @@ fn collect_ground_rows(world: &[EntityState]) -> Vec<(String, f64, f64)> {
         .collect()
 }
 
+/// SGP4 + GMST: updates orbital transforms to Earth-fixed geodetic (independent of surface integration).
 fn propagate_space_entities(world: &mut [EntityState], t: DateTime<Utc>) {
     for e in world.iter_mut() {
         let Some(ref sp) = e.space else {
@@ -502,6 +505,8 @@ fn entity_snapshots_from_world(guard: &[EntityState]) -> Vec<EntitySnapshotDto> 
 }
 
 /// Integrate simple kinematics for `dt_sim_s` (simulated seconds, not wall time).
+/// Non-space units stay in **Earth-fixed** WGS84; coordinates are not advanced by sidereal rotation
+/// each tick (that rotation is implicit in the frame). Orbital states are updated separately.
 fn integrate_entities(world: &mut [EntityState], dt_sim_s: f64) {
     for entity in world.iter_mut() {
         if entity.attached_to_id.is_some() {

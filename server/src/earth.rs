@@ -2,6 +2,16 @@
 //!
 //! Used for entity motion, orbit station-keeping distances, and any server-side
 //! range/bearing checks. See `docs/EARTH_AND_TERRAIN.md` for terrain / DTED plans.
+//!
+//! ## Simulation frames (terrestrial rotation)
+//!
+//! **Surface and air** units use **Earth-fixed** WGS84 geodetic (`lat_deg`, `lon_deg`, HAE): a
+//! stationary asset keeps constant coordinates on the rotating body (it “sticks” to the globe).
+//!
+//! **Satellites** are propagated in **TEME/ECI** by SGP4, then converted to Earth-fixed geodetic
+//! using **GMST** in [`crate::space`]. Subsatellite latitude/longitude, footprints, and
+//! satellite–ground geometry (FoV caps, horizon distance) are therefore all evaluated in the same
+//! rotating frame, consistent with line-of-sight and coverage over a spinning Earth.
 
 use geographiclib_rs::{Geodesic, DirectGeodesic, InverseGeodesic};
 use std::sync::OnceLock;
@@ -15,6 +25,11 @@ fn wgs84() -> &'static Geodesic {
 
 /// WGS84 semi-major axis (m).
 pub const WGS84_A_M: f64 = 6378137.0;
+
+/// Conventional angular velocity of Earth about its axis (rad/s), WGS84 / IERS-style nominal.
+/// Documented for physics and any future inertial↔Earth-fixed conversions; terrestrial entity
+/// coordinates in this sim stay Earth-fixed and are **not** drifted by this rate each tick.
+pub const EARTH_SIDEREAL_ROTATION_RATE_RAD_PER_S: f64 = 7.2921151467e-5;
 
 /// International foot in meters (exact definition). Used to convert WGS84 HAE between ft (wire format) and m (physics / Cesium).
 ///
@@ -365,5 +380,11 @@ mod tests {
         let (lat1, lon1) = geodesic_direct_deg(lat0, lon0, hdg, dist);
         let back = geodesic_distance_m(lat0, lon0, lat1, lon1);
         assert!((back - dist).abs() < 0.5, "back={} dist={}", back, dist);
+    }
+
+    #[test]
+    fn earth_sidereal_rate_matches_sidereal_day_length() {
+        let period_s = std::f64::consts::TAU / EARTH_SIDEREAL_ROTATION_RATE_RAD_PER_S;
+        assert!((period_s - 86164.0905).abs() < 0.1, "period_s={}", period_s);
     }
 }

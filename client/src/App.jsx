@@ -336,6 +336,7 @@ function App() {
               socket={socket}
               session={session}
               entities={worldEntities}
+              simTiming={simTiming}
               selectedEntityId={mapSelectedEntityId}
               onSelectedEntityIdChange={setMapSelectedEntityId}
             />
