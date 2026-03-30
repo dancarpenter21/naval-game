@@ -91,6 +91,35 @@ function isGlobeUnitSelected(entity, selectedEntityId) {
   return selectedEntityId != null && String(entity.id) === String(selectedEntityId);
 }
 
+/** Cache key for milsymbol raster (skip SVG→dataURL work when unchanged between snapshots). */
+function milsymbolRasterKey(entity, selected) {
+  return `${normalizeSidc(entity.sidc)}|${selected ? 1 : 0}|${Number(entity.heading_deg ?? 0).toFixed(2)}`;
+}
+
+/** Add or update a polyline overlay without remove+add each tick (avoids flicker). */
+function setOrUpdatePolylineOverlay(entityCollection, id, flatLonLatHeight, polylineOpts) {
+  const positions = Cesium.Cartesian3.fromDegreesArrayHeights(flatLonLatHeight);
+  const ent = entityCollection.getById(id);
+  if (!Cesium.defined(ent)) {
+    entityCollection.add({
+      id,
+      polyline: {
+        positions,
+        ...polylineOpts,
+      },
+    });
+    return;
+  }
+  if (!ent.polyline) {
+    ent.polyline = new Cesium.PolylineGraphics({
+      positions,
+      ...polylineOpts,
+    });
+  } else {
+    ent.polyline.positions = new Cesium.ConstantProperty(positions);
+  }
+}
+
 function isTypingInFormField() {
   const el = document.activeElement;
   if (!el || typeof el !== 'object') return false;
@@ -198,6 +227,8 @@ const MapView = ({
   /** Set when Cesium.Viewer fails (e.g. WebGL); keeps tab chrome usable. */
   const [viewerInitError, setViewerInitError] = useState(null);
   const deferredFocusAppliedRef = useRef(false);
+  /** Per-entity milsymbol raster cache; avoids regenerating SVG/data URLs every snapshot. */
+  const milsymbolRasterCacheRef = useRef(new Map());
 
   useEffect(() => {
     planWaypointsRef.current = planWaypoints;
@@ -626,24 +657,37 @@ const MapView = ({
       } else if (imagePath) {
         const uri = publicAssetUrl(imagePath);
         const edge = selected ? 52 : 40;
-        const billboardOpts = {
-          image: uri,
-          width: edge,
-          height: edge,
-          scale: selected ? 1.08 : 1.0,
-          verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-        };
         if (Cesium.defined(existing)) {
           existing.position = new Cesium.ConstantPositionProperty(position);
           existing.orientation = undefined;
-          stripUnitMarkerPrimitives(existing);
-          existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
+          if (existing.billboard) {
+            existing.billboard.image = new Cesium.ConstantProperty(uri);
+            existing.billboard.width = new Cesium.ConstantProperty(edge);
+            existing.billboard.height = new Cesium.ConstantProperty(edge);
+            existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.08 : 1.0);
+          } else {
+            stripUnitMarkerPrimitives(existing);
+            existing.billboard = new Cesium.BillboardGraphics({
+              image: uri,
+              width: edge,
+              height: edge,
+              scale: selected ? 1.08 : 1.0,
+              verticalOrigin: Cesium.VerticalOrigin.CENTER,
+              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            });
+          }
         } else {
           viewer.entities.add({
             id: uid,
             position,
-            billboard: billboardOpts,
+            billboard: {
+              image: uri,
+              width: edge,
+              height: edge,
+              scale: selected ? 1.08 : 1.0,
+              verticalOrigin: Cesium.VerticalOrigin.CENTER,
+              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            },
           });
         }
       } else if (wantsCesiumShape) {
@@ -685,8 +729,15 @@ const MapView = ({
           if (Cesium.defined(existing)) {
             existing.position = new Cesium.ConstantPositionProperty(position);
             existing.orientation = undefined;
-            stripUnitMarkerPrimitives(existing);
-            existing.point = new Cesium.PointGraphics(pt);
+            if (existing.point) {
+              existing.point.pixelSize = new Cesium.ConstantProperty(pixelSize);
+              existing.point.color = new Cesium.ConstantProperty(mat);
+              existing.point.outlineColor = new Cesium.ConstantProperty(outlineCol);
+              existing.point.outlineWidth = new Cesium.ConstantProperty(1);
+            } else {
+              stripUnitMarkerPrimitives(existing);
+              existing.point = new Cesium.PointGraphics(pt);
+            }
           } else {
             viewer.entities.add({
               id: uid,
@@ -737,29 +788,37 @@ const MapView = ({
           addOrUpdateShape({ cylinder: cyl }, 'cylinder');
         }
       } else {
-        let image;
-        let width = 32;
-        let height = 32;
-
-        try {
-          const normalizedSidc = normalizeSidc(entity.sidc);
-          const symbol = new ms.Symbol(normalizedSidc, {
-            size: selected ? 36 : 28,
-            standard: MILSYMBOL_STANDARD,
-            direction: Number(entity.heading_deg ?? 0),
-            outlineWidth: selected ? 6 : 0,
-            outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
-          });
-          image = svgToImageDataUrl(symbol.asSVG());
-          const maxEdge = selected ? 42 : 34;
-          const wh = billboardPixelSizeFromMilsymbol(symbol, maxEdge);
-          width = wh.width;
-          height = wh.height;
-        } catch {
-          image = svgToImageDataUrl(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
-          );
+        const visKey = milsymbolRasterKey(entity, selected);
+        const cache = milsymbolRasterCacheRef.current;
+        let cached = cache.get(entity.id);
+        let rasterDirty = !cached || cached.key !== visKey;
+        if (rasterDirty) {
+          let image;
+          let width = 32;
+          let height = 32;
+          try {
+            const normalizedSidc = normalizeSidc(entity.sidc);
+            const symbol = new ms.Symbol(normalizedSidc, {
+              size: selected ? 36 : 28,
+              standard: MILSYMBOL_STANDARD,
+              direction: Number(entity.heading_deg ?? 0),
+              outlineWidth: selected ? 6 : 0,
+              outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
+            });
+            image = svgToImageDataUrl(symbol.asSVG());
+            const maxEdge = selected ? 42 : 34;
+            const wh = billboardPixelSizeFromMilsymbol(symbol, maxEdge);
+            width = wh.width;
+            height = wh.height;
+          } catch {
+            image = svgToImageDataUrl(
+              '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="10" fill="#0f4c81" stroke="#fff" stroke-width="2"/></svg>',
+            );
+          }
+          cached = { key: visKey, image, width, height };
+          cache.set(entity.id, cached);
         }
+        const { image, width, height } = cached;
 
         const billboardOpts = {
           image,
@@ -773,8 +832,17 @@ const MapView = ({
         if (Cesium.defined(existing)) {
           existing.position = new Cesium.ConstantPositionProperty(position);
           existing.orientation = undefined;
-          stripUnitMarkerPrimitives(existing);
-          existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
+          if (existing.billboard) {
+            if (rasterDirty) {
+              existing.billboard.image = new Cesium.ConstantProperty(image);
+              existing.billboard.width = new Cesium.ConstantProperty(width);
+              existing.billboard.height = new Cesium.ConstantProperty(height);
+            }
+            existing.billboard.scale = new Cesium.ConstantProperty(selected ? 1.12 : 1.0);
+          } else {
+            stripUnitMarkerPrimitives(existing);
+            existing.billboard = new Cesium.BillboardGraphics(billboardOpts);
+          }
         } else {
           viewer.entities.add({
             id: uid,
@@ -782,6 +850,13 @@ const MapView = ({
             billboard: billboardOpts,
           });
         }
+      }
+    }
+
+    const stillPresent = new Set(entities.map((e) => e.id));
+    for (const id of milsymbolRasterCacheRef.current.keys()) {
+      if (!stillPresent.has(id)) {
+        milsymbolRasterCacheRef.current.delete(id);
       }
     }
 
@@ -819,21 +894,30 @@ const MapView = ({
   useEffect(() => {
     if (!viewer) return;
 
-    const stripPrev = () => {
-      const toRemove = [];
-      viewer.entities.values.forEach((e) => {
-        const id = e.id != null ? String(e.id) : '';
-        if (
-          id.startsWith('overlay-auth-path-') ||
-          id.startsWith('overlay-sat-ground-track-')
-        ) {
-          toRemove.push(e);
+    const wanted = new Set();
+    if (selectedEntityId) {
+      const row = entities.find((e) => e.id === selectedEntityId);
+      if (row) {
+        if (row.display_path_deg && row.display_path_deg.length >= 2) {
+          wanted.add(`overlay-auth-path-${selectedEntityId}`);
         }
-      });
-      toRemove.forEach((e) => viewer.entities.remove(e));
-    };
+        if (row.space?.ground_track_deg && row.space.ground_track_deg.length >= 2) {
+          wanted.add(`overlay-sat-ground-track-${selectedEntityId}`);
+        }
+      }
+    }
 
-    stripPrev();
+    const toRemove = [];
+    viewer.entities.values.forEach((e) => {
+      const id = e.id != null ? String(e.id) : '';
+      if (
+        (id.startsWith('overlay-auth-path-') || id.startsWith('overlay-sat-ground-track-')) &&
+        !wanted.has(id)
+      ) {
+        toRemove.push(e);
+      }
+    });
+    toRemove.forEach((e) => viewer.entities.remove(e));
 
     if (!selectedEntityId) {
       try {
@@ -862,13 +946,9 @@ const MapView = ({
       for (const p of movementPath) {
         flat.push(p.lon_deg, p.lat_deg, h);
       }
-      viewer.entities.add({
-        id: `overlay-auth-path-${selectedEntityId}`,
-        polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-          width: 4,
-          material: Cesium.Color.CYAN.withAlpha(0.88),
-        },
+      setOrUpdatePolylineOverlay(viewer.entities, `overlay-auth-path-${selectedEntityId}`, flat, {
+        width: 4,
+        material: Cesium.Color.CYAN.withAlpha(0.88),
       });
     }
 
@@ -878,15 +958,16 @@ const MapView = ({
       for (const p of groundTrack) {
         flatGround.push(p.lon_deg, p.lat_deg, 0);
       }
-      viewer.entities.add({
-        id: `overlay-sat-ground-track-${selectedEntityId}`,
-        polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flatGround),
+      setOrUpdatePolylineOverlay(
+        viewer.entities,
+        `overlay-sat-ground-track-${selectedEntityId}`,
+        flatGround,
+        {
           width: 3,
           material: Cesium.Color.fromCssColorString('#f59e0b').withAlpha(0.9),
           arcType: Cesium.ArcType.GEODESIC,
         },
-      });
+      );
     }
 
     try {
