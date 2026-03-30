@@ -91,9 +91,9 @@ function isGlobeUnitSelected(entity, selectedEntityId) {
   return selectedEntityId != null && String(entity.id) === String(selectedEntityId);
 }
 
-/** Cache key for milsymbol raster (skip SVG→dataURL work when unchanged between snapshots). */
+/** Cache key for milsymbol raster (skip SVG→dataURL work when unchanged between snapshots). Heading omitted so icons are not rebuilt when course changes. */
 function milsymbolRasterKey(entity, selected) {
-  return `${normalizeSidc(entity.sidc)}|${selected ? 1 : 0}|${Number(entity.heading_deg ?? 0).toFixed(2)}`;
+  return `${normalizeSidc(entity.sidc)}|${selected ? 1 : 0}`;
 }
 
 /** Add or update a polyline overlay without remove+add each tick (avoids flicker). */
@@ -801,7 +801,6 @@ const MapView = ({
             const symbol = new ms.Symbol(normalizedSidc, {
               size: selected ? 36 : 28,
               standard: MILSYMBOL_STANDARD,
-              direction: Number(entity.heading_deg ?? 0),
               outlineWidth: selected ? 6 : 0,
               outlineColor: selected ? '#fbbf24' : 'rgb(239, 239, 239)',
             });
